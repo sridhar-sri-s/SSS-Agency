@@ -1,0 +1,6 @@
+{
+  "name": "DistroFlow Pro",
+  "description": "Distribution management platform facilitating sales reporting, packing efficiency, delivery tracking, and account auditing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

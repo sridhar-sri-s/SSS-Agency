@@ -1,0 +1,339 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  BarChart3, Users, ClipboardCheck, Truck, ShieldAlert,
+  ArrowRight, Sparkles, Building, Database, Menu, X, Sun, Moon, LogIn, LogOut
+} from 'lucide-react';
+
+import { 
+  TeamMember, SalesReport, DamageReport, CollectionReport, 
+  PackingLog, ReturnReport, MileageReport, MarketCollection 
+} from './types';
+
+import { DEFAULT_USERS } from './mockData';
+
+import RoleSwitcher from './components/RoleSwitcher';
+import SubmitReportForms from './components/SubmitReportForms';
+import AdminViews from './components/AdminViews';
+import LoginView from './components/LoginView';
+import { useApi } from './useApi';
+
+export default function App() {
+  
+  // --- STATE FOR AUTHORIZED ACCESS ---
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
+    return localStorage.getItem('distro_is_logged_in') === 'true';
+  });
+
+  const { data: usersList, add: apiAddUser, update: apiUpdateUser, remove: apiRemoveUser } = useApi<TeamMember>('/api/team', DEFAULT_USERS);
+
+  // Wrapper for setUsersList inside components that expect a dispatcher or simple array methods
+  const setUsersList = (action: React.SetStateAction<TeamMember[]>) => {
+    // If it's a new full array, infer changes or simply just fallback to API updates manually.
+    // Our TeamManagement handles add/edit/delete by mutating array, but we can hook into it.
+    // Actually, we should refactor AdminViews to use add/update/remove directly. 
+    // For now, we'll implement a sync-all helper if needed, but the simple approach is to let TeamManagement handle the sync manually. Let's provide a proxy for `setUsersList` that we'll fix later or we can just pass the handlers!
+  };
+
+  // --- STATE FOR CURRENT USER ACTIVE SIMULATION ---
+  const [currentRole, setCurrentRole] = useState<TeamMember>(() => {
+    const saved = localStorage.getItem('distro_current_role');
+    if (saved) return JSON.parse(saved);
+    return {
+      id: 'admin',
+      name: 'Global Administrator',
+      role: 'Accounts',
+      detail: 'Primary Admin Owner',
+      avatar: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200'
+    };
+  });
+
+  const [currentTab, setCurrentTab] = useState('overview');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // --- REMOTE DATA STATES ---
+  const { data: salesReports, add: addSalesReport, update: updateSalesReport } = useApi<SalesReport>('/api/sales');
+  const { data: damageReports, add: addDamageReport, update: updateDamageReport } = useApi<DamageReport>('/api/damage');
+  const { data: collectionReports, add: addCollectionReport, update: updateCollectionReport } = useApi<CollectionReport>('/api/collection');
+  const { data: packingLogs, add: addPackingLogBase, update: updatePackingLogBase } = useApi<PackingLog>('/api/packing');
+  const { data: returnReports, add: addReturnReport, update: updateReturnReport } = useApi<ReturnReport>('/api/returns');
+  const { data: mileageReports, add: addMileageReport, update: updateMileageReport } = useApi<MileageReport>('/api/mileage');
+  const { data: marketCollections, add: addMarketCollection, update: updateMarketCollection } = useApi<MarketCollection>('/api/market');
+
+  useEffect(() => {
+    localStorage.setItem('distro_current_role', JSON.stringify(currentRole));
+  }, [currentRole]);
+
+  useEffect(() => {
+    localStorage.setItem('distro_is_logged_in', isLoggedIn ? 'true' : 'false');
+  }, [isLoggedIn]);
+
+  const handleLogout = () => {
+    setIsLoggedIn(false);
+    localStorage.removeItem('distro_is_logged_in');
+  };
+
+  // Packing log needs special handling to update today's log if it exists
+  const handleAddPackingLog = (log: PackingLog) => {
+    const exists = packingLogs.find(l => l.memberId === log.memberId);
+    if (exists) {
+      updatePackingLogBase(exists.id, log);
+    } else {
+      addPackingLogBase(log);
+    }
+  };
+
+  const handleResetData = async () => {
+    if (confirm('Are you sure you want to reset all records?')) {
+      alert("Database reset is not fully implemented in API yet, use admin panels to delete!");
+    }
+  };
+
+  const isManagementPersona = currentRole.id === 'admin' || currentRole.role === 'Accounts';
+  const isAdmin = currentRole.id === 'admin';
+
+  const menuItems = [
+    { id: 'overview', name: 'Overview Home', icon: Building, desc: 'Operational KPI dashboard' },
+    ...(isAdmin ? [{ id: 'team', name: 'User Management', icon: Users, desc: 'Add/Edit Staff Access' }] : []),
+    { id: 'sales', name: 'Sales Hub', icon: BarChart3, desc: 'Salesmen metrics & logs' },
+    ...(isAdmin ? [{ id: 'packing', name: 'Packing Line', icon: Database, desc: 'Line efficiency & lunch breaks' }] : []),
+    { id: 'delivery', name: 'Delivery / Returns', icon: Truck, desc: 'Mileage & returns processing' },
+    { id: 'accounts', name: 'Verification Hub', icon: ClipboardCheck, desc: 'Accounts auditing Desk' },
+  ];
+
+  if (!isLoggedIn) {
+    return (
+      <LoginView 
+        usersPool={usersList}
+        onLogin={(user) => { 
+          setCurrentRole(user); 
+          setIsLoggedIn(true); 
+          if (user.id === 'admin' || user.role === 'Accounts') {
+            setCurrentTab('overview'); 
+          }
+        }} 
+      />
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col bg-[#F5F5F7] text-[#1D1D1F]">
+      
+      <header className="bg-white/90 backdrop-blur-md border-b border-[#D2D2D7] sticky top-0 z-40 px-6 py-3.5 shadow-sm">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-[#0071E3] rounded-lg flex items-center justify-center text-white font-bold shadow-sm">
+              D
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-[#1D1D1F] tracking-tight flex items-center gap-2">
+                <span>DistriFlow Pro</span>
+                <span className="text-[10px] font-bold text-[#0071E3] bg-[#0071E3]/10 px-2 py-0.5 rounded-full inline-block uppercase">
+                  v2.4.0
+                </span>
+              </h2>
+              <p className="text-[10px] text-[#86868B] font-medium font-sans">Distributed Logistical Dispatch & Audit Verification Hub</p>
+            </div>
+          </div>
+
+          <div className="hidden md:flex items-center gap-4">
+            <div className="text-right">
+              <span className="text-[10px] uppercase font-bold text-[#86868B] tracking-wider">Gateway Status:</span>
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-green-600 justify-end mt-0.5">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                <span>SYSTEM STABLE (UTC LIVE)</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:flex items-center gap-2 border-l border-[#D2D2D7] pl-3">
+              <img src={currentRole.avatar} alt={currentRole.name} className="w-7 h-7 rounded-full object-cover border border-[#D2D2D7]" />
+              <div className="text-left select-none">
+                <p className="text-[11px] font-bold text-[#1D1D1F] leading-none">{currentRole.name}</p>
+                <p className="text-[9px] text-[#86868B] leading-none mt-0.5">{currentRole.role}</p>
+              </div>
+            </div>
+
+            <button 
+              onClick={handleLogout}
+              title="End Secure Session"
+              className="text-[11px] font-bold bg-red-50 hover:bg-red-100 text-red-600 px-2.5 py-1.5 rounded-lg border border-red-200 transition-colors flex items-center gap-1.5 shadow-sm-light cursor-pointer"
+            >
+              <LogOut size={13} />
+              <span>Sign Out</span>
+            </button>
+
+            <button 
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-2 rounded-lg text-[#424245] hover:bg-[#F5F5F7]"
+            >
+              {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="flex-1 max-w-7xl w-full mx-auto flex flex-col md:flex-row relative">
+        
+        {isManagementPersona ? (
+          <aside className={`w-full md:w-64 bg-white border-r border-[#D2D2D7] p-5 md:sticky md:top-16 space-y-6 shrink-0 transition-transform ${
+            mobileMenuOpen ? 'block' : 'hidden md:block'
+          }`}>
+            <div className="space-y-2">
+              <span className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider pl-2 block">Manager Control Room</span>
+              <nav className="space-y-1">
+                {menuItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = currentTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setCurrentTab(item.id);
+                        setMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-start gap-3 px-3 py-2.5 rounded-lg text-left transition-colors group ${
+                        isActive 
+                          ? 'bg-[#F5F5F7] text-[#0071E3] font-semibold' 
+                          : 'text-[#424245] hover:bg-[#F5F5F7] hover:text-[#1D1D1F]'
+                      }`}
+                    >
+                      <Icon size={16} className={`mt-0.5 shrink-0 ${isActive ? 'text-[#0071E3]' : 'text-[#86868B] group-hover:text-[#424245]'}`} />
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold leading-none">{item.name}</p>
+                        <p className={`text-[10px] mt-1 transition-colors ${isActive ? 'text-[#6E6E73]' : 'text-[#86868B] group-hover:text-[#6E6E73]'}`}>
+                          {item.desc}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+
+            <div className="border-t border-[#D2D2D7] pt-4 px-2 space-y-2">
+              <span className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider block">Auditor Accounts (Quick View)</span>
+              <div className="bg-[#F5F5F7] border border-[#D2D2D7] p-3 rounded-xl flex items-center gap-3 shadow-sm-light">
+                <img 
+                  src={currentRole.avatar} 
+                  alt={currentRole.name} 
+                  className="w-8 h-8 rounded-full object-cover border border-[#D2D2D7]" 
+                />
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-[#1D1D1F] leading-none truncate">{currentRole.name}</p>
+                  <span className="text-[9px] text-[#0071E3] bg-[#0071E3]/5 border border-[#0071E3]/20 px-1.5 py-0.5 rounded font-bold inline-block mt-1">
+                    {currentRole.role} Role
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center justify-center gap-2 mt-2 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-xs font-semibold transition-colors border border-red-200 cursor-pointer"
+              >
+                <LogOut size={13} />
+                <span>Sign Out Account</span>
+              </button>
+            </div>
+
+            <div className="bg-amber-50/70 border border-amber-200 p-3.5 rounded-xl flex items-start gap-2 text-xs text-amber-900 leading-normal shadow-sm-light">
+              <Sparkles size={15} className="text-amber-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-amber-950 uppercase tracking-wider text-[10px]">Active Synchronization</p>
+                <p className="mt-1 text-amber-800 text-[10px] leading-relaxed">Change to salesman/packer via the persona switcher in the bottom-right corner to submit reports directly to the API.</p>
+              </div>
+            </div>
+          </aside>
+        ) : (
+          <aside className="w-full md:w-64 bg-white border-r border-[#D2D2D7] p-5 shrink-0 space-y-4">
+            <div className="bg-amber-50/70 p-4 rounded-xl border border-amber-200 space-y-2">
+              <h4 className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                <LogIn size={14} />
+                <span>Shift Portal Active</span>
+              </h4>
+              <p className="text-xs text-amber-800 leading-relaxed">
+                As a logged-in <strong>{currentRole.name} ({currentRole.role})</strong>, fill in the report panels on the right. Your logged submissions are sent directly to the cloud backend!
+              </p>
+            </div>
+
+            <div className="space-y-3 border-t border-[#D2D2D7] pt-4 px-1">
+              <span className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider block">Simulator Control</span>
+              
+              <button 
+                onClick={handleLogout}
+                className="w-full flex items-center justify-center gap-2 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-xs font-semibold transition-colors border border-red-200 cursor-pointer"
+              >
+                <LogOut size={13} />
+                <span>Sign Out Account</span>
+              </button>
+
+              <button 
+                onClick={() => setCurrentRole({
+                  id: 'admin',
+                  name: 'Global Administrator',
+                  role: 'Accounts',
+                  detail: 'Primary Admin Owner',
+                  avatar: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200'
+                })}
+                className="w-full flex items-center justify-between text-left p-2.5 px-3 bg-white hover:bg-[#F5F5F7] text-[#0071E3] rounded-lg text-xs font-semibold transition-colors border border-[#D2D2D7] cursor-pointer shadow-sm-light"
+              >
+                <span>Return to Administrator</span>
+                <ArrowRight size={14} className="text-[#0071E3]" />
+              </button>
+            </div>
+          </aside>
+        )}
+
+        <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto w-full">
+          {isManagementPersona ? (
+            <AdminViews 
+              currentTab={currentTab}
+              isAdmin={isAdmin}
+              usersList={usersList}
+              apiAddUser={apiAddUser}
+              apiUpdateUser={apiUpdateUser}
+              apiRemoveUser={apiRemoveUser}
+              setUsersList={() => {}}
+              salesReports={salesReports}
+              damageReports={damageReports}
+              collectionReports={collectionReports}
+              packingLogs={packingLogs}
+              returnReports={returnReports}
+              mileageReports={mileageReports}
+              marketCollections={marketCollections}
+              onVerifySalesReport={(id, s, r) => updateSalesReport(id, { status: s, remarks: r })}
+              onVerifyDamageReport={(id, s, r) => updateDamageReport(id, { status: s, remarks: r })}
+              onVerifyCollectionReport={(id, s, r) => updateCollectionReport(id, { status: s, remarks: r })}
+              onVerifyReturnReport={(id, s, r) => updateReturnReport(id, { status: s, remarks: r })}
+              onVerifyMileageReport={(id, s, r) => updateMileageReport(id, { status: s, remarks: r })}
+              onVerifyMarketCollection={(id, s, r) => updateMarketCollection(id, { status: s, remarks: r })}
+            />
+          ) : (
+            <SubmitReportForms 
+              currentRole={currentRole}
+              usersList={usersList}
+              onAddSalesReport={addSalesReport}
+              onAddDamageReport={addDamageReport}
+              onAddCollectionReport={addCollectionReport}
+              onAddPackingLog={handleAddPackingLog}
+              onAddReturnReport={addReturnReport}
+              onAddMileageReport={addMileageReport}
+              onAddMarketCollection={addMarketCollection}
+            />
+          )}
+        </main>
+
+      </div>
+
+      <RoleSwitcher 
+        currentRole={currentRole}
+        usersList={usersList}
+        onChangeRole={(member) => {
+          setCurrentRole(member);
+          if (member.id === 'admin' || member.role === 'Accounts') {
+            setCurrentTab('overview');
+          }
+        }}
+      />
+    </div>
+  );
+}
