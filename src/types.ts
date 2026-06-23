@@ -5,6 +5,14 @@ export interface DamageItem {
   mrp: number;
 }
 
+export interface ReturnItem {
+  id: string;
+  productName: string;
+  quantity: number;
+  mrp: number;
+  reason?: string;
+}
+
 export interface SalesReport {
   id: string;
   date: string;
@@ -16,6 +24,7 @@ export interface SalesReport {
   remarks?: string;
   timestamp: string;
   images?: string[];
+  createdAt?: string;
 }
 
 export interface DamageReport {
@@ -29,6 +38,7 @@ export interface DamageReport {
   status: 'Pending' | 'Verified' | 'Disputed';
   remarks?: string;
   images?: string[];
+  createdAt?: string;
 }
 
 export interface CollectionReport {
@@ -41,6 +51,7 @@ export interface CollectionReport {
   status: 'Pending' | 'Verified' | 'Disputed';
   remarks?: string;
   images?: string[];
+  createdAt?: string;
 }
 
 export interface PackingLog {
@@ -56,6 +67,7 @@ export interface PackingLog {
   status: 'Packing' | 'On Break' | 'Checked Out';
   efficiency: number; // e.g. 96 (%)
   images?: string[];
+  createdAt?: string;
 }
 
 export interface ReturnReport {
@@ -65,12 +77,15 @@ export interface ReturnReport {
   driverName: string;
   shopNo: string;
   shopName: string;
-  productName: string;
-  quantity: number;
-  mrp: number;
+  items: ReturnItem[];
+  // Legacy single-item fields kept for backward compat display
+  productName?: string;
+  quantity?: number;
+  mrp?: number;
   status: 'Pending' | 'Verified' | 'Disputed';
   remarks?: string;
   images?: string[];
+  createdAt?: string;
 }
 
 export interface MileageReport {
@@ -85,6 +100,7 @@ export interface MileageReport {
   status: 'Pending' | 'Verified' | 'Disputed';
   remarks?: string;
   images?: string[];
+  createdAt?: string;
 }
 
 export interface MarketCollection {
@@ -101,6 +117,7 @@ export interface MarketCollection {
   status: 'Pending' | 'Verified' | 'Disputed';
   remarks?: string;
   images?: string[];
+  createdAt?: string;
 }
 
 export interface TeamMember {

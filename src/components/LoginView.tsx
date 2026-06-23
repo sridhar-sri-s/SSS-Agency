@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { LogIn, KeyRound, User, ArrowRight, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { TeamMember } from '../types';
+import { databases, DATABASE_ID, COLLECTIONS, Query } from '../lib/appwrite';
 
 interface LoginViewProps {
   onLogin: (member: TeamMember) => void;
@@ -9,34 +10,106 @@ interface LoginViewProps {
 }
 
 export default function LoginView({ onLogin, usersPool }: LoginViewProps) {
-  const [userId, setUserId] = useState('');
+  const [usernameInput, setUsernameInput] = useState('');
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userId.trim() || !password.trim()) {
-      setErrorMsg('Please enter both User ID and Password.');
-      return;
-    }
-
-    const foundUser = usersPool.find(u => 
-      u.userId?.toLowerCase() === userId.trim().toLowerCase() && 
-      u.password === password
-    );
-
-    if (!foundUser) {
-      setErrorMsg('Invalid User ID or Password.');
+    if (!usernameInput.trim() || !password.trim()) {
+      setErrorMsg('Please enter both Username and Password.');
       return;
     }
 
     setIsLoggingIn(true);
     setErrorMsg(null);
-    setTimeout(() => {
-      onLogin(foundUser);
+
+    let foundUser: TeamMember | undefined;
+
+    try {
+      // We look up by username (or userId)
+      const input = usernameInput.trim();
+      const response = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.TEAM_MEMBERS,
+        [
+          Query.or([
+            Query.equal('username', input),
+            Query.equal('userId', input)
+          ])
+        ]
+      );
+
+      if (response.documents.length > 0) {
+        const doc = response.documents[0];
+        
+        // Active check
+        if (doc.active === false) {
+           setErrorMsg('Your account has been deactivated.');
+           setIsLoggingIn(false);
+           return;
+        }
+
+        // Check password
+        if (doc.password === password) {
+          foundUser = {
+            id: doc.$id,
+            name: doc.name || doc.username,
+            role: doc.role,
+            detail: doc.detail || '',
+            avatar: doc.avatar || '',
+            userId: doc.userId,
+            password: doc.password,
+          } as TeamMember;
+        } else {
+          setErrorMsg('Invalid Username or Password.');
+          setIsLoggingIn(false);
+          return;
+        }
+      }
+    } catch (error: any) {
+      console.error('Appwrite auth lookup failed:', error);
+      
+      // Detailed error handling as requested
+      if (error?.code === 404) {
+        if (error.message.includes('Collection')) {
+          setErrorMsg('System Error: Required collections are missing. Please run the database bootstrap script.');
+        } else if (error.message.includes('Database')) {
+          setErrorMsg('System Error: Database not found. Please run the database bootstrap script.');
+        } else {
+           setErrorMsg('System Error: Data source missing (404). Please contact administrator.');
+        }
+      } else if (error?.code === 400 && error.message.includes('Attribute')) {
+        setErrorMsg('System Error: Database schema is incomplete (Missing Attributes). Please run the bootstrap script.');
+      } else {
+         setErrorMsg('Failed to connect to authentication server. Falling back to local pool...');
+      }
+    }
+
+    // Fallback to usersPool if Appwrite didn't find a match and didn't throw a fatal config error
+    // (Only fallback if it was a connection error or if user genuinely wasn't found in a valid DB)
+    if (!foundUser && !errorMsg?.includes('System Error')) {
+      foundUser = usersPool.find(u => 
+        (u.userId?.toLowerCase() === usernameInput.trim().toLowerCase() || u.name?.toLowerCase() === usernameInput.trim().toLowerCase()) && 
+        u.password === password
+      );
+      
+      if (!foundUser) {
+        setErrorMsg('Invalid Username or Password.');
+      }
+    }
+
+    if (foundUser) {
+      // Clear error if fallback succeeded
+      setErrorMsg(null);
+      setTimeout(() => {
+        onLogin(foundUser!);
+        setIsLoggingIn(false);
+      }, 600);
+    } else {
       setIsLoggingIn(false);
-    }, 600);
+    }
   };
 
   return (
@@ -44,28 +117,28 @@ export default function LoginView({ onLogin, usersPool }: LoginViewProps) {
       <div className="w-full max-w-sm bg-white rounded-3xl border border-[#D2D2D7] shadow-xl overflow-hidden p-8">
         
         <div className="flex flex-col items-center text-center mb-8">
-          <div className="w-12 h-12 bg-[#0071E3] rounded-2xl flex items-center justify-center text-white font-bold text-2xl shadow-md mb-4">
-            D
+          <div className="w-12 h-12 bg-red-600 rounded-2xl flex items-center justify-center text-white font-bold text-xl shadow-md mb-4 tracking-tighter">
+            SSS
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#1D1D1F]">DistriFlow Pro</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-[#1D1D1F]">SSS Enterprises</h1>
           <p className="text-xs text-[#86868B] uppercase tracking-widest font-semibold mt-1">Access Gateway</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider pl-1 block">User ID</label>
+            <label className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider pl-1 block">Username / ID</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <User size={16} className="text-[#86868B]" />
               </div>
               <input
                 type="text"
-                value={userId}
+                value={usernameInput}
                 onChange={(e) => {
-                  setUserId(e.target.value);
+                  setUsernameInput(e.target.value);
                   setErrorMsg(null);
                 }}
-                placeholder="Enter your User ID"
+                placeholder="Enter your Username"
                 className="w-full text-sm font-medium text-[#1D1D1F] bg-[#F5F5F7] border border-[#D2D2D7] rounded-xl py-3 pl-10 pr-3 focus:outline-none focus:border-[#0071E3] focus:ring-1 focus:ring-[#0071E3] transition-all"
               />
             </div>
@@ -106,9 +179,9 @@ export default function LoginView({ onLogin, usersPool }: LoginViewProps) {
 
           <button
             type="submit"
-            disabled={isLoggingIn || !userId || !password}
+            disabled={isLoggingIn || !usernameInput || !password}
             className={`w-full py-3 mt-4 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 ${
-              userId && password
+              usernameInput && password
                 ? 'bg-[#0071E3] hover:bg-[#0066CC] text-white cursor-pointer active:scale-[0.98]' 
                 : 'bg-[#EDEDF0] text-[#86868B] cursor-not-allowed border border-[#D2D2D7]'
             }`}
@@ -128,8 +201,7 @@ export default function LoginView({ onLogin, usersPool }: LoginViewProps) {
         </form>
 
         <div className="mt-8 pt-4 border-t border-[#D2D2D7] text-[10px] text-center text-[#86868B] flex flex-col gap-1 items-center justify-center">
-          <p>Demo: Use ID: <strong>admin</strong> and Password: <strong>password123</strong></p>
-          <p>Others check original IDs and <strong>1234</strong></p>
+          <p>Demo: Use Username: <strong>admin</strong> and Password: <strong>admin123</strong></p>
         </div>
       </div>
     </div>

@@ -3,7 +3,7 @@ import {
   Plus, Trash2, Camera, Keyboard, Calendar, 
   MapPin, AlertTriangle, CheckCircle, Info, Send, Clock, DollarSign, Package
 } from 'lucide-react';
-import { TeamMember, SalesReport, DamageReport, CollectionReport, PackingLog, ReturnReport, MileageReport, MarketCollection } from '../types';
+import { TeamMember, SalesReport, DamageReport, CollectionReport, PackingLog, ReturnReport, ReturnItem, MileageReport, MarketCollection } from '../types';
 
 interface SubmitReportFormsProps {
   currentRole: TeamMember;
@@ -37,30 +37,6 @@ export default function SubmitReportForms({
     setSuccessMsg(msg);
     setTimeout(() => setSuccessMsg(''), 4000);
   };
-
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const handleSimulateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      triggerSuccessMsg(`Document ${e.target.files[0].name} uploaded successfully!`);
-      e.target.value = '';
-    }
-  };
-
-  const renderUploadAlternate = () => (
-    <div className="mt-6 flex flex-col md:flex-row items-center gap-4 bg-[#F5F5F7] p-3 rounded-lg border border-dashed border-[#D2D2D7]">
-      <div className="flex-1 text-xs text-[#86868B] font-medium leading-relaxed">
-        <strong className="text-[#1D1D1F]">Alternate Input Method:</strong> Instead of typing the values above, you can directly upload a photo of the receipt or paper log to automatically fill the form.
-      </div>
-      <button 
-        type="button"
-        onClick={() => fileInputRef.current?.click()} 
-        className="shrink-0 flex items-center justify-center gap-2 bg-white hover:bg-gray-50 border border-[#D2D2D7] text-[#1D1D1F] px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm"
-      >
-        <Camera size={14} className="text-[#0071E3]" />
-        <span>Upload Document</span>
-      </button>
-    </div>
-  );
 
   // --- SALESMAN WORKFLOWS ---
   const [salesTab, setSalesTab] = useState<'daily' | 'damage' | 'collection'>('daily');
@@ -198,13 +174,39 @@ export default function SubmitReportForms({
   const [driverTab, setDriverTab] = useState<'returns' | 'mileage' | 'collections'>('returns');
   const [isQuickCapture, setIsQuickCapture] = useState(false);
 
-  // Return product state
+  // Return product state — multi-item
   const [retShopNo, setRetShopNo] = useState('');
   const [retShopName, setRetShopName] = useState('');
-  const [retProduct, setRetProduct] = useState('');
-  const [retQty, setRetQty] = useState('');
-  const [retMRP, setRetMRP] = useState('');
-  const [retReason, setRetReason] = useState('');
+  const [retItems, setRetItems] = useState<ReturnItem[]>([]);
+  const [retCurProduct, setRetCurProduct] = useState('');
+  const [retCurQty, setRetCurQty] = useState('');
+  const [retCurMRP, setRetCurMRP] = useState('');
+  const [retCurReason, setRetCurReason] = useState('');
+
+  const addReturnItem = () => {
+    if (!retCurProduct || !retCurQty || !retCurMRP) return;
+    setRetItems([
+      ...retItems,
+      {
+        id: 'ri-' + Date.now(),
+        productName: retCurProduct,
+        quantity: parseInt(retCurQty),
+        mrp: parseFloat(retCurMRP),
+        reason: retCurReason || undefined
+      }
+    ]);
+    setRetCurProduct('');
+    setRetCurQty('');
+    setRetCurMRP('');
+    setRetCurReason('');
+  };
+
+  const removeReturnItem = (id: string) => {
+    setRetItems(retItems.filter(i => i.id !== id));
+  };
+
+  // Quick capture file input ref for returns
+  const quickCaptureRef = React.useRef<HTMLInputElement>(null);
 
   // Mileage state
   const [milRoute, setMilRoute] = useState(currentRole.detail || 'Route Alpha-04');
@@ -212,7 +214,18 @@ export default function SubmitReportForms({
   const [milEnd, setMilEnd] = useState('');
   const [milFuel, setMilFuel] = useState('');
 
-  // Market collection state
+  // Market collection state — multi-entry
+  interface ColEntry {
+    id: string;
+    type: 'Cash' | 'IMPS' | 'Cheque';
+    amount: number;
+    shopNo: string;
+    shopName: string;
+    referenceNo: string;
+    chequeDate: string;
+  }
+
+  const [colEntries, setColEntries] = useState<ColEntry[]>([]);
   const [colType, setColType] = useState<'Cash' | 'IMPS' | 'Cheque'>('Cash');
   const [colAmt, setColAmt] = useState('');
   const [colShopNo, setColShopNo] = useState('');
@@ -220,11 +233,37 @@ export default function SubmitReportForms({
   const [colRefNo, setColRefNo] = useState('');
   const [colCheqDate, setColCheqDate] = useState(new Date().toISOString().split('T')[0]);
 
+  const addCollectionEntry = () => {
+    if (!colAmt || !colShopName) return;
+    setColEntries([
+      ...colEntries,
+      {
+        id: 'ce-' + Date.now(),
+        type: colType,
+        amount: parseFloat(colAmt),
+        shopNo: colShopNo || 'SH-' + Math.floor(100 + Math.random() * 900),
+        shopName: colShopName,
+        referenceNo: colType !== 'Cash' ? (colRefNo || 'REF-' + Math.floor(100000 + Math.random() * 900000)) : '',
+        chequeDate: colType === 'Cheque' ? colCheqDate : ''
+      }
+    ]);
+    setColAmt('');
+    setColShopNo('');
+    setColShopName('');
+    setColRefNo('');
+  };
+
+  const removeCollectionEntry = (id: string) => {
+    setColEntries(colEntries.filter(e => e.id !== id));
+  };
+
+  const colRunningTotal = colEntries.reduce((sum, e) => sum + e.amount, 0);
+
   const handleDriverSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (driverTab === 'returns') {
-      if (!retShopName || !retProduct || !retQty || !retMRP) {
-        return alert('Please complete the product returns fields');
+      if (!retShopName || retItems.length === 0) {
+        return alert('Please add shop name and at least one return item');
       }
       onAddReturnReport({
         id: 'ret-' + Date.now(),
@@ -233,19 +272,18 @@ export default function SubmitReportForms({
         driverName: currentRole.name,
         shopNo: retShopNo || 'SH-' + Math.floor(1000 + Math.random() * 9000),
         shopName: retShopName,
-        productName: retProduct,
-        quantity: parseInt(retQty),
-        mrp: parseFloat(retMRP),
+        items: retItems,
         status: 'Pending',
-        remarks: retReason || 'Standard returns log'
+        remarks: 'Market returns log'
       });
       // reset
       setRetShopNo('');
       setRetShopName('');
-      setRetProduct('');
-      setRetQty('');
-      setRetMRP('');
-      setRetReason('');
+      setRetItems([]);
+      setRetCurProduct('');
+      setRetCurQty('');
+      setRetCurMRP('');
+      setRetCurReason('');
       triggerSuccessMsg('Market returns logged successfully!');
     } else if (driverTab === 'mileage') {
       if (!milEnd) return alert('Please enter ending odometer value');
@@ -264,33 +302,34 @@ export default function SubmitReportForms({
       setMilFuel('');
       triggerSuccessMsg('Mileage log saved! Total odometer mileage logged.');
     } else if (driverTab === 'collections') {
-      if (!colAmt || !colShopName) return alert('Please enter collection amount and shop name');
-      onAddMarketCollection({
-        id: 'dc-' + Date.now(),
-        date: new Date().toISOString().split('T')[0],
-        driverId: currentRole.id,
-        driverName: currentRole.name,
-        type: colType,
-        amount: parseFloat(colAmt),
-        shopNo: colShopNo || 'SH-' + Math.floor(100 + Math.random() * 900),
-        shopName: colShopName,
-        referenceNo: colType !== 'Cash' ? (colRefNo || 'REF-' + Math.floor(100000 + Math.random() * 900000)) : undefined,
-        chequeDate: colType === 'Cheque' ? colCheqDate : undefined,
-        status: 'Pending'
+      if (colEntries.length === 0) return alert('Please add at least one collection entry');
+      // Submit each entry as a separate document
+      colEntries.forEach((entry, idx) => {
+        onAddMarketCollection({
+          id: 'dc-' + Date.now() + '-' + idx,
+          date: new Date().toISOString().split('T')[0],
+          driverId: currentRole.id,
+          driverName: currentRole.name,
+          type: entry.type,
+          amount: entry.amount,
+          shopNo: entry.shopNo,
+          shopName: entry.shopName,
+          referenceNo: entry.type !== 'Cash' ? entry.referenceNo : undefined,
+          chequeDate: entry.type === 'Cheque' ? entry.chequeDate : undefined,
+          status: 'Pending'
+        });
       });
+      setColEntries([]);
       setColAmt('');
       setColShopNo('');
       setColShopName('');
       setColRefNo('');
-      triggerSuccessMsg('Payment collection recorded! Available for Accounts verification.');
+      triggerSuccessMsg(`${colEntries.length} collection(s) recorded! Available for Accounts verification.`);
     }
   };
 
   return (
     <div id="forms-wrapper" className="max-w-2xl mx-auto space-y-6">
-      
-      {/* Hidden file input for simulate upload */}
-      <input type="file" ref={fileInputRef} onChange={handleSimulateUpload} className="hidden" accept="image/*,.pdf" />
 
       {/* Success Banner */}
       {successMsg && (
@@ -533,7 +572,7 @@ export default function SubmitReportForms({
                   <label className="cursor-pointer bg-neutral-50 hover:bg-neutral-100 text-[#0071E3] py-2.5 rounded-lg border border-dashed border-[#0071E3]/30 flex items-center justify-center gap-2 transition-colors">
                     <Camera size={16} />
                     <span className="text-xs font-semibold">Add Image</span>
-                    <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
+                    <input type="file" accept="image/*" capture="environment" multiple onChange={handleImageUpload} className="hidden" />
                   </label>
                   {reportImages.length > 0 && (
                     <div className="flex gap-2 overflow-x-auto pb-1">
@@ -564,8 +603,6 @@ export default function SubmitReportForms({
                   Clear Fields
                 </button>
               </div>
-
-              {renderUploadAlternate()}
               
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-neutral-100">
                 <button 
@@ -670,8 +707,6 @@ export default function SubmitReportForms({
               <span>Lunch Duration is tracked. Packing logs update the overall corporate target metrics immediately.</span>
             </div>
 
-            {renderUploadAlternate()}
-
             <div className="pt-4 border-t border-neutral-100 flex justify-end gap-3">
               <button 
                 type="submit" 
@@ -769,16 +804,31 @@ export default function SubmitReportForms({
               {driverTab === 'returns' && (
                 <>
                   {isQuickCapture ? (
-                    <div className="border-2 border-dashed border-neutral-300 rounded-2xl p-8 text-center bg-neutral-50 flex flex-col items-center justify-center space-y-3 cursor-pointer hover:bg-neutral-100 transition-colors">
-                      <div className="w-12 h-12 bg-neutral-200 text-neutral-600 rounded-full flex items-center justify-center">
-                        <Camera size={24} />
+                    <label className="block cursor-pointer">
+                      <div className="border-2 border-dashed border-neutral-300 rounded-2xl p-8 text-center bg-neutral-50 flex flex-col items-center justify-center space-y-3 hover:bg-neutral-100 transition-colors">
+                        <div className="w-12 h-12 bg-neutral-200 text-neutral-600 rounded-full flex items-center justify-center">
+                          <Camera size={24} />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-neutral-700">Scan Slips, Receipts, or Invoices</p>
+                          <p className="text-[11px] text-neutral-500 mt-1">Upload an image for automatic OCR & AI form completion.</p>
+                        </div>
+                        <span className="text-[10px] text-blue-600 bg-blue-100 px-3 py-1 rounded-full font-semibold">Tap to Capture</span>
                       </div>
-                      <div>
-                        <p className="text-xs font-bold text-neutral-700">Scan Slips, Receipts, or Invoices</p>
-                        <p className="text-[11px] text-neutral-500 mt-1">Upload an image for automatic OCR & AI form completion.</p>
-                      </div>
-                      <span className="text-[10px] text-blue-600 bg-blue-100 px-3 py-1 rounded-full font-semibold">Simulated Scanner</span>
-                    </div>
+                      <input
+                        ref={quickCaptureRef}
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files.length > 0) {
+                            triggerSuccessMsg(`Photo "${e.target.files[0].name}" captured successfully!`);
+                            e.target.value = '';
+                          }
+                        }}
+                        className="hidden"
+                      />
+                    </label>
                   ) : (
                     <>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -788,7 +838,6 @@ export default function SubmitReportForms({
                             type="text" 
                             placeholder="e.g. SH-0921"
                             value={retShopNo}
-                            required
                             onChange={(e) => setRetShopNo(e.target.value)}
                             className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 focus:border-blue-500 outline-none" 
                           />
@@ -806,54 +855,92 @@ export default function SubmitReportForms({
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="col-span-1 md:col-span-2">
-                          <label className="block text-xs font-medium text-neutral-500 mb-1.5">Returned Product Name</label>
-                          <input 
-                            type="text" 
-                            placeholder="e.g. Premium Blend Coffee"
-                            value={retProduct}
-                            required
-                            onChange={(e) => setRetProduct(e.target.value)}
-                            className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 focus:border-blue-500 outline-none" 
-                          />
+                      {/* Multi-item return entry */}
+                      <div className="border border-neutral-200 p-4 rounded-xl space-y-4">
+                        <h4 className="text-sm font-semibold text-neutral-800">Add Return Product</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div className="md:col-span-2">
+                            <label className="block text-xs font-medium text-neutral-500 mb-1.5">Product Name</label>
+                            <input 
+                              type="text" 
+                              placeholder="e.g. Premium Blend Coffee"
+                              value={retCurProduct}
+                              onChange={(e) => setRetCurProduct(e.target.value)}
+                              className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 focus:border-blue-500 outline-none" 
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-neutral-500 mb-1.5">Quantity</label>
+                            <input 
+                              type="number" 
+                              placeholder="12"
+                              value={retCurQty}
+                              onChange={(e) => setRetCurQty(e.target.value)}
+                              className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 focus:border-blue-500 outline-none" 
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-neutral-500 mb-1.5">MRP Per Unit (₹)</label>
+                            <div className="relative">
+                              <DollarSign size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+                              <input 
+                                type="number" 
+                                step="0.01"
+                                placeholder="e.g. 24.99"
+                                value={retCurMRP}
+                                onChange={(e) => setRetCurMRP(e.target.value)}
+                                className="w-full pl-8 pr-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 font-mono-sm focus:border-blue-500 outline-none" 
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-neutral-500 mb-1.5">Reason (Optional)</label>
+                            <input 
+                              type="text" 
+                              placeholder="e.g. Damaged Packaging"
+                              value={retCurReason}
+                              onChange={(e) => setRetCurReason(e.target.value)}
+                              className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 focus:border-blue-500 outline-none" 
+                            />
+                          </div>
+                          <div className="flex items-end mb-0.5">
+                            <button type="button" onClick={addReturnItem} className="w-full text-xs font-bold text-[#0071E3] bg-[#0071E3]/10 hover:bg-[#0071E3]/20 py-2.5 rounded-lg transition-colors flex items-center justify-center gap-1">
+                              <Plus size={14} />
+                              Add Item
+                            </button>
+                          </div>
                         </div>
-                        <div>
-                          <label className="block text-xs font-medium text-neutral-500 mb-1.5">Quantity</label>
-                          <input 
-                            type="number" 
-                            placeholder="12"
-                            value={retQty}
-                            required
-                            onChange={(e) => setRetQty(e.target.value)}
-                            className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 focus:border-blue-500 outline-none" 
-                          />
-                        </div>
-                      </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-xs font-medium text-neutral-500 mb-1.5">MRP Per Unit (₹)</label>
-                          <input 
-                            type="number" 
-                            step="0.01"
-                            placeholder="e.g. 24.99"
-                            value={retMRP}
-                            required
-                            onChange={(e) => setRetMRP(e.target.value)}
-                            className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 font-mono-sm focus:border-blue-500 outline-none" 
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-medium text-neutral-500 mb-1.5">Reason for return</label>
-                          <input 
-                            type="text" 
-                            placeholder="e.g. Damaged Packaging"
-                            value={retReason}
-                            onChange={(e) => setRetReason(e.target.value)}
-                            className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 focus:border-blue-500 outline-none" 
-                          />
-                        </div>
+                        {retItems.length > 0 && (
+                          <div className="mt-4 border-t pt-4">
+                            <p className="text-xs font-medium text-neutral-500 mb-2">Added Items ({retItems.length})</p>
+                            <ul className="space-y-2">
+                              {retItems.map((item) => (
+                                <li key={item.id} className="flex justify-between items-center text-xs bg-neutral-50 p-2.5 rounded-md border border-neutral-200">
+                                  <div className="flex-1 min-w-0">
+                                    <span className="font-medium">{item.quantity}x {item.productName}</span>
+                                    {item.reason && (
+                                      <span className="text-neutral-400 ml-2">— {item.reason}</span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-3 shrink-0 ml-3">
+                                    <span className="font-mono-sm font-semibold">₹{item.mrp.toFixed(2)}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeReturnItem(item.id)}
+                                      className="text-red-400 hover:text-red-600 transition-colors"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                            <div className="mt-2 text-right text-xs font-semibold text-neutral-600">
+                              Total Value: <span className="font-mono-sm text-neutral-800">₹{retItems.reduce((sum, i) => sum + (i.mrp * i.quantity), 0).toFixed(2)}</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </>
                   )}
@@ -916,106 +1003,153 @@ export default function SubmitReportForms({
 
               {driverTab === 'collections' && (
                 <>
-                  <div className="bg-neutral-50 p-4 rounded-xl border border-neutral-200 mb-4">
-                    <label className="block text-xs font-medium text-neutral-500 mb-1.5">Reconciliation Type</label>
-                    <div className="flex gap-4">
-                      {['Cash', 'IMPS', 'Cheque'].map((t) => (
-                        <label key={t} className="flex items-center gap-2 text-xs font-bold text-neutral-800">
-                          <input 
-                            type="radio" 
-                            name="colType" 
-                            value={t} 
-                            checked={colType === t}
-                            onChange={() => {
-                              setColType(t as any);
-                              // set default simulated details
-                              if (t === 'IMPS') setColRefNo('IMPS' + Math.floor(100000 + Math.random() * 899999));
-                              else if (t === 'Cheque') setColRefNo('CHQ-' + Math.floor(10000 + Math.random() * 89999));
-                              else setColRefNo('');
-                            }}
-                            className="text-blue-600 focus:ring-blue-500" 
-                          />
-                          {t} Format
-                        </label>
-                      ))}
-                    </div>
-                  </div>
+                  {/* Current entry form */}
+                  <div className="border border-neutral-200 p-4 rounded-xl space-y-4">
+                    <h4 className="text-sm font-semibold text-neutral-800">Add Collection Entry</h4>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-medium text-neutral-500 mb-1.5">Shop Name</label>
-                      <input 
-                        type="text" 
-                        placeholder="e.g. Metro Plaza"
-                        value={colShopName}
-                        required
-                        onChange={(e) => setColShopName(e.target.value)}
-                        className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 focus:border-blue-500 outline-none" 
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-neutral-500 mb-1.5">Shop Number</label>
-                      <input 
-                        type="text" 
-                        placeholder="e.g. SH-021"
-                        value={colShopNo}
-                        onChange={(e) => setColShopNo(e.target.value)}
-                        className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 focus:border-blue-500 outline-none" 
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-medium text-neutral-500 mb-1.5">Collection Amount Total (₹)</label>
-                      <div className="relative">
-                        <DollarSign size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
-                        <input 
-                          type="number" 
-                          step="0.01"
-                          placeholder="e.g. 1250.00"
-                          value={colAmt}
-                          required
-                          onChange={(e) => setColAmt(e.target.value)}
-                          className="w-full pl-8 pr-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 font-mono-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" 
-                        />
+                    <div className="bg-neutral-50 p-3 rounded-lg border border-neutral-200">
+                      <label className="block text-xs font-medium text-neutral-500 mb-1.5">Reconciliation Type</label>
+                      <div className="flex gap-4">
+                        {['Cash', 'IMPS', 'Cheque'].map((t) => (
+                          <label key={t} className="flex items-center gap-2 text-xs font-bold text-neutral-800">
+                            <input 
+                              type="radio" 
+                              name="colType" 
+                              value={t} 
+                              checked={colType === t}
+                              onChange={() => {
+                                setColType(t as any);
+                                if (t === 'IMPS') setColRefNo('IMPS' + Math.floor(100000 + Math.random() * 899999));
+                                else if (t === 'Cheque') setColRefNo('CHQ-' + Math.floor(10000 + Math.random() * 89999));
+                                else setColRefNo('');
+                              }}
+                              className="text-blue-600 focus:ring-blue-500" 
+                            />
+                            {t} Format
+                          </label>
+                        ))}
                       </div>
                     </div>
 
-                    {colType !== 'Cash' && (
-                      <div>
-                        <label className="block text-xs font-medium text-neutral-500 mb-1.5">
-                          {colType === 'IMPS' ? 'IMPS Number' : 'Cheque Number'}
-                        </label>
-                        <input 
-                          type="text" 
-                          placeholder={colType === 'IMPS' ? 'e.g. IMPS9823749823' : 'e.g. CHQ-004921'}
-                          value={colRefNo}
-                          required
-                          onChange={(e) => setColRefNo(e.target.value)}
-                          className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 font-mono-sm focus:border-blue-500 outline-none" 
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {colType === 'Cheque' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-xs font-medium text-neutral-500 mb-1.5">Cheque Date</label>
+                        <label className="block text-xs font-medium text-neutral-500 mb-1.5">Shop Name</label>
                         <input 
-                          type="date" 
-                          value={colCheqDate} 
-                          onChange={(e) => setColCheqDate(e.target.value)}
-                          className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 focus:border-blue-500 outline-none font-mono-sm" 
+                          type="text" 
+                          placeholder="e.g. Metro Plaza"
+                          value={colShopName}
+                          onChange={(e) => setColShopName(e.target.value)}
+                          className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 focus:border-blue-500 outline-none" 
                         />
                       </div>
+                      <div>
+                        <label className="block text-xs font-medium text-neutral-500 mb-1.5">Shop Number</label>
+                        <input 
+                          type="text" 
+                          placeholder="e.g. SH-021"
+                          value={colShopNo}
+                          onChange={(e) => setColShopNo(e.target.value)}
+                          className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 focus:border-blue-500 outline-none" 
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-medium text-neutral-500 mb-1.5">Collection Amount (₹)</label>
+                        <div className="relative">
+                          <DollarSign size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+                          <input 
+                            type="number" 
+                            step="0.01"
+                            placeholder="e.g. 1250.00"
+                            value={colAmt}
+                            onChange={(e) => setColAmt(e.target.value)}
+                            className="w-full pl-8 pr-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 font-mono-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" 
+                          />
+                        </div>
+                      </div>
+
+                      {colType !== 'Cash' && (
+                        <div>
+                          <label className="block text-xs font-medium text-neutral-500 mb-1.5">
+                            {colType === 'IMPS' ? 'IMPS Number' : 'Cheque Number'}
+                          </label>
+                          <input 
+                            type="text" 
+                            placeholder={colType === 'IMPS' ? 'e.g. IMPS9823749823' : 'e.g. CHQ-004921'}
+                            value={colRefNo}
+                            onChange={(e) => setColRefNo(e.target.value)}
+                            className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 font-mono-sm focus:border-blue-500 outline-none" 
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {colType === 'Cheque' && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-neutral-500 mb-1.5">Cheque Date</label>
+                          <input 
+                            type="date" 
+                            value={colCheqDate} 
+                            onChange={(e) => setColCheqDate(e.target.value)}
+                            className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm text-neutral-800 focus:border-blue-500 outline-none font-mono-sm" 
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={addCollectionEntry}
+                      className="w-full text-xs font-bold text-[#0071E3] bg-[#0071E3]/10 hover:bg-[#0071E3]/20 py-2.5 rounded-lg transition-colors flex items-center justify-center gap-1"
+                    >
+                      <Plus size={14} />
+                      Add Collection Entry
+                    </button>
+                  </div>
+
+                  {/* List of added entries */}
+                  {colEntries.length > 0 && (
+                    <div className="border border-neutral-200 p-4 rounded-xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-medium text-neutral-500">Queued Entries ({colEntries.length})</p>
+                        <div className="text-xs font-semibold text-neutral-800 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">
+                          Running Total: <span className="font-mono-sm">₹{colRunningTotal.toFixed(2)}</span>
+                        </div>
+                      </div>
+                      <ul className="space-y-2">
+                        {colEntries.map((entry) => (
+                          <li key={entry.id} className="flex justify-between items-center text-xs bg-neutral-50 p-2.5 rounded-md border border-neutral-200">
+                            <div className="flex-1 min-w-0">
+                              <span className="font-medium">{entry.shopName}</span>
+                              <span className="text-neutral-400 ml-1.5">({entry.shopNo})</span>
+                              <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                entry.type === 'Cash' ? 'bg-green-100 text-green-700' :
+                                entry.type === 'IMPS' ? 'bg-blue-100 text-blue-700' :
+                                'bg-amber-100 text-amber-700'
+                              }`}>
+                                {entry.type}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0 ml-3">
+                              <span className="font-mono-sm font-semibold">₹{entry.amount.toFixed(2)}</span>
+                              <button
+                                type="button"
+                                onClick={() => removeCollectionEntry(entry.id)}
+                                className="text-red-400 hover:text-red-600 transition-colors"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
                 </>
               )}
-
-              {renderUploadAlternate()}
 
               <div className="pt-4 border-t border-neutral-100 flex justify-end gap-3">
                 <button 

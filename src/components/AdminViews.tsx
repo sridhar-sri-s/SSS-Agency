@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { 
   TrendingUp, Users, Truck, CheckCircle2, AlertCircle, Clock, 
   Search, ShieldAlert, ArrowUpRight, Check, X, RefreshCw, MessageSquare, MapPin, 
-  Coffee, Calendar, DollarSign, Package, Compass
+  Coffee, Calendar, DollarSign, Package, Compass, ChevronDown, ChevronUp, Award
 } from 'lucide-react';
 import { 
   SalesReport, DamageReport, CollectionReport, 
@@ -33,6 +33,61 @@ interface AdminViewsProps {
   onVerifyMarketCollection: (id: string, status: 'Verified' | 'Disputed' | 'Pending', remarks?: string) => void;
 }
 
+// Helper to get the display-friendly month options (current + past 5)
+function getMonthOptions(): { label: string; value: string }[] {
+  const options: { label: string; value: string }[] = [];
+  const now = new Date();
+  for (let i = 0; i < 6; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const label = d.toLocaleString('default', { month: 'long', year: 'numeric' });
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    options.push({ label, value });
+  }
+  return options;
+}
+
+// Helper to get return items from a ReturnReport (handles both new multi-item and legacy single-item)
+function getReturnItems(ret: ReturnReport): { productName: string; quantity: number; mrp: number; reason?: string }[] {
+  if (ret.items && ret.items.length > 0) {
+    return ret.items.map(item => ({
+      productName: item.productName,
+      quantity: item.quantity,
+      mrp: item.mrp,
+      reason: item.reason,
+    }));
+  }
+  // Legacy fallback: single productName/quantity/mrp fields
+  if (ret.productName) {
+    return [{
+      productName: ret.productName,
+      quantity: ret.quantity ?? 0,
+      mrp: ret.mrp ?? 0,
+      reason: ret.remarks,
+    }];
+  }
+  return [];
+}
+
+// Helper to compute total value of a return report
+function getReturnTotalValue(ret: ReturnReport): number {
+  const items = getReturnItems(ret);
+  return items.reduce((sum, item) => sum + item.mrp * item.quantity, 0);
+}
+
+// Helper to get display product name / summary for a return
+function getReturnDisplayName(ret: ReturnReport): string {
+  const items = getReturnItems(ret);
+  if (items.length === 0) return 'No items';
+  if (items.length === 1) return items[0].productName;
+  return `${items.length} items`;
+}
+
+// Helper: total quantity for a return
+function getReturnTotalQuantity(ret: ReturnReport): number {
+  const items = getReturnItems(ret);
+  return items.reduce((sum, item) => sum + item.quantity, 0);
+}
+
 export default function AdminViews({
   currentTab,
   isAdmin,
@@ -61,6 +116,36 @@ export default function AdminViews({
   const [packingSearch, setPackingSearch] = useState('');
   const [returnsSearch, setReturnsSearch] = useState('');
 
+  // --- DASHBOARD FRESHNESS STATE ---
+  const [dashboardDate, setDashboardDate] = useState<string>(new Date().toISOString().split('T')[0]);
+
+  // --- CONFIGURABLE TARGETS STATE ---
+  const [dailyTarget, setDailyTarget] = useState<number>(() => {
+    return parseInt(localStorage.getItem('distro_daily_target') || '10000', 10);
+  });
+  const [monthlyTarget, setMonthlyTarget] = useState<number>(() => {
+    return parseInt(localStorage.getItem('distro_monthly_target') || '1000', 10);
+  });
+
+  const saveDailyTarget = (val: number) => {
+    setDailyTarget(val);
+    localStorage.setItem('distro_daily_target', val.toString());
+  };
+
+  const saveMonthlyTarget = (val: number) => {
+    setMonthlyTarget(val);
+    localStorage.setItem('distro_monthly_target', val.toString());
+  };
+
+  // --- DAILY FILTERED DATA ---
+  const todaySalesReports = useMemo(() => salesReports.filter(r => r.date === dashboardDate), [salesReports, dashboardDate]);
+  const todayDamageReports = useMemo(() => damageReports.filter(r => r.date === dashboardDate), [damageReports, dashboardDate]);
+  const todayCollectionReports = useMemo(() => collectionReports.filter(r => r.date === dashboardDate), [collectionReports, dashboardDate]);
+  const todayPackingLogs = useMemo(() => packingLogs.filter(l => l.date === dashboardDate), [packingLogs, dashboardDate]);
+  const todayReturnReports = useMemo(() => returnReports.filter(r => r.date === dashboardDate), [returnReports, dashboardDate]);
+  const todayMileageReports = useMemo(() => mileageReports.filter(r => r.date === dashboardDate), [mileageReports, dashboardDate]);
+  const todayMarketCollections = useMemo(() => marketCollections.filter(c => c.date === dashboardDate), [marketCollections, dashboardDate]);
+
   // --- STATE FOR ACCOUNTS MODAL/REMARKS REMEDIAL ACTIONS ---
   const [activeAuditItem, setActiveAuditItem] = useState<{
     id: string;
@@ -71,15 +156,94 @@ export default function AdminViews({
   // --- IMAGE VIEWING STATE ---
   const [viewingImage, setViewingImage] = useState<string | null>(null);
 
-  // --- MOCK RECENT GENERAL ACTIVITY LEDGER ---
-  const activities = [
-    { text: "John Doe uploaded a new sales report", time: "2 mins ago", sub: "Downtown Metro | ₹4,520.00" },
-    { text: "Marcus T. recorded lunch break completion", time: "15 mins ago", sub: "Station 1 | 30 minutes duration" },
-    { text: "Rajesh Kumar logged a product return", time: "45 mins ago", sub: "SH-0921 Corner Mart | Coffee damaged" },
-    { text: "Suresh Singh checked in IMPS receipt #IMPS867114A", time: "1 hr ago", sub: "Amount: ₹34,800.50" },
-    { text: "Priya Patel verified Sarah Jenkins Eastside Report", time: "2 hrs ago", sub: "Audit checked and verified green" },
-    { text: "Alex Wong reported damaged acoustic headset", time: "3 hrs ago", sub: "Shop SH-093 | Pending verification" }
-  ];
+  // --- MONTHLY PACKING PROGRESS STATE ---
+  const monthOptions = useMemo(() => getMonthOptions(), []);
+  const [selectedMonth, setSelectedMonth] = useState(monthOptions[0].value);
+
+  // --- RETURN REPORT EXPANDED ITEMS STATE ---
+  const [expandedReturnIds, setExpandedReturnIds] = useState<Set<string>>(new Set());
+
+  const toggleReturnExpand = (id: string) => {
+    setExpandedReturnIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // --- DYNAMIC Telemetry Stream ---
+  const dynamicActivities = useMemo(() => {
+    const list: { text: string; time: string; sub: string; timestampVal: number }[] = [];
+    
+    salesReports.forEach(r => {
+      list.push({
+        text: `${r.salesmanName} uploaded a sales report`,
+        time: 'Sales Report',
+        sub: `${r.beatName} | ₹${r.totalSales.toLocaleString()}`,
+        timestampVal: r.createdAt ? new Date(r.createdAt).getTime() : Date.now() - 60000
+      });
+    });
+    
+    damageReports.forEach(r => {
+      list.push({
+        text: `${r.salesmanName} logged damaged products`,
+        time: 'Damage Claim',
+        sub: `${r.shopName} | ${r.items?.length || 0} items`,
+        timestampVal: r.createdAt ? new Date(r.createdAt).getTime() : Date.now() - 120000
+      });
+    });
+
+    packingLogs.forEach(l => {
+      list.push({
+        text: `${l.memberName} logged packing status: ${l.status}`,
+        time: 'Packing Log',
+        sub: `Station ${l.station} | ${l.productsPacked} packed | ${l.efficiency}% eff`,
+        timestampVal: l.createdAt ? new Date(l.createdAt).getTime() : Date.now() - 180000
+      });
+    });
+
+    returnReports.forEach(r => {
+      const displayName = getReturnDisplayName(r);
+      const totalQty = getReturnTotalQuantity(r);
+      list.push({
+        text: `${r.driverName} logged returned products`,
+        time: 'Delivery Return',
+        sub: `${r.shopName} | ${displayName} x${totalQty}`,
+        timestampVal: r.createdAt ? new Date(r.createdAt).getTime() : Date.now() - 240000
+      });
+    });
+
+    marketCollections.forEach(c => {
+      list.push({
+        text: `${c.driverName} collected payment`,
+        time: 'Payment Collection',
+        sub: `${c.shopName} | ₹${c.amount.toLocaleString()} via ${c.type}`,
+        timestampVal: c.createdAt ? new Date(c.createdAt).getTime() : Date.now() - 300000
+      });
+    });
+
+    // Sort by timestampVal descending
+    const sorted = list.sort((a, b) => b.timestampVal - a.timestampVal).slice(0, 8);
+    
+    return sorted.map(item => {
+      const diffMs = Date.now() - item.timestampVal;
+      let timeStr = 'Just now';
+      if (diffMs > 60000) {
+        const mins = Math.floor(diffMs / 60000);
+        timeStr = mins === 1 ? '1 min ago' : `${mins} mins ago`;
+        if (mins >= 60) {
+          const hrs = Math.floor(mins / 60);
+          timeStr = hrs === 1 ? '1 hr ago' : `${hrs} hrs ago`;
+        }
+      }
+      return {
+        text: item.text,
+        time: timeStr,
+        sub: item.sub
+      };
+    });
+  }, [salesReports, damageReports, packingLogs, returnReports, marketCollections]);
 
   // Helper status color rendering mapping
   const getStatusBadge = (status: 'Verified' | 'Disputed' | 'Pending') => {
@@ -110,14 +274,14 @@ export default function AdminViews({
   // ==========================================
   const renderOverview = () => {
     // Aggregates
-    const totalSalesSum = salesReports.reduce((s, r) => s + r.totalSales, 0);
+    const totalSalesSum = todaySalesReports.reduce((s, r) => s + r.totalSales, 0);
     const activePackers = packingLogs.filter(p => p.status === 'Packing').length;
     const pendingAudits = salesReports.filter(r => r.status === 'Pending').length + 
                           damageReports.filter(r => r.status === 'Pending').length + 
                           returnReports.filter(r => r.status === 'Pending').length;
     
     // Average efficiency
-    const packingEff = Math.round(packingLogs.reduce((s, l) => s + l.efficiency, 0) / (packingLogs.length || 1));
+    const packingEff = Math.round(todayPackingLogs.reduce((s, l) => s + l.efficiency, 0) / (todayPackingLogs.length || 1));
 
     return (
       <div id="overview-view" className="space-y-6">
@@ -127,7 +291,7 @@ export default function AdminViews({
             <span className="text-xs text-amber-300 font-bold tracking-wider uppercase">Live Operations Room</span>
             <h1 className="text-2xl font-bold tracking-tight">Company Management Monitor</h1>
             <p className="text-xs text-neutral-300 max-w-xl">
-              Facilitating interactive coordination across {salesReports.length}-record sales beats, {packingLogs.length} packing stations, and active delivery routes.
+              Facilitating interactive coordination across {todaySalesReports.length}-record sales beats, {todayPackingLogs.length} packing stations, and active delivery routes.
             </p>
           </div>
           <div className="absolute right-0 bottom-0 top-0 w-1/3 bg-[radial-gradient(circle_at_right,_rgba(251,191,36,0.15),_transparent)] pointer-events-none" />
@@ -135,14 +299,14 @@ export default function AdminViews({
 
         {/* Dynamic Bento Cards Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white p-5 rounded-2xl border border-neutral-200/80 shadow-sm flex flex-col justify-between">
+          <div className="apple-card p-5 flex flex-col justify-between">
             <div className="flex items-center justify-between pb-2">
               <span className="text-xs text-neutral-500 font-medium font-sans">Total Sales volume</span>
               <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg"><TrendingUp size={16} /></div>
             </div>
             <div>
               <p className="text-2xl font-extrabold text-neutral-900 tracking-tight font-mono-sm">
-                ${totalSalesSum.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                ₹{totalSalesSum.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
               </p>
               <div className="flex items-center gap-1.5 mt-1 text-[11px] text-emerald-600 font-medium">
                 <ArrowUpRight size={12} />
@@ -151,7 +315,7 @@ export default function AdminViews({
             </div>
           </div>
 
-          <div className="bg-white p-5 rounded-2xl border border-neutral-200/80 shadow-sm flex flex-col justify-between">
+          <div className="apple-card p-5 flex flex-col justify-between">
             <div className="flex items-center justify-between pb-2">
               <span className="text-xs text-neutral-500 font-medium">Active Packing Staff</span>
               <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg"><Users size={16} /></div>
@@ -162,12 +326,12 @@ export default function AdminViews({
               </p>
               <div className="flex items-center gap-1.5 mt-1 text-[11px] text-indigo-600 font-medium">
                 <span className="inline-block w-2 h-2 rounded-full bg-indigo-500 animate-ping"></span>
-                <span>Active packaging benches running</span>
+                <span>Active packing benches running</span>
               </div>
             </div>
           </div>
 
-          <div className="bg-white p-5 rounded-2xl border border-neutral-200/80 shadow-sm flex flex-col justify-between">
+          <div className="apple-card p-5 flex flex-col justify-between">
             <div className="flex items-center justify-between pb-2">
               <span className="text-xs text-neutral-500 font-medium">Outstanding Audits Plan</span>
               <div className="p-1.5 bg-amber-50 text-amber-600 rounded-lg"><ShieldAlert size={16} /></div>
@@ -183,7 +347,7 @@ export default function AdminViews({
             </div>
           </div>
 
-          <div className="bg-white p-5 rounded-2xl border border-neutral-200/80 shadow-sm flex flex-col justify-between">
+          <div className="apple-card p-5 flex flex-col justify-between">
             <div className="flex items-center justify-between pb-2">
               <span className="text-xs text-neutral-500 font-medium">Packing Efficiency</span>
               <div className="p-1.5 bg-neutral-950 text-neutral-100 rounded-lg"><CheckCircle2 size={16} /></div>
@@ -203,7 +367,7 @@ export default function AdminViews({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           
           {/* Latest Reports List */}
-          <div className="lg:col-span-7 bg-white rounded-2xl border border-neutral-200 p-6 shadow-sm space-y-4">
+          <div className="lg:col-span-7 apple-card p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
               <div>
                 <h3 className="font-bold text-neutral-800 text-sm">Latest Reports Stream</h3>
@@ -227,7 +391,7 @@ export default function AdminViews({
                     <tr key={r.id} className="hover:bg-neutral-50/50 transition-colors text-xs text-neutral-700">
                       <td className="py-3 font-semibold text-neutral-950">{r.salesmanName}</td>
                       <td className="py-3 text-neutral-500">{r.date}</td>
-                      <td className="py-3 text-right font-mono-sm font-semibold">${r.totalSales.toLocaleString()}</td>
+                      <td className="py-3 text-right font-mono-sm font-semibold">₹{r.totalSales.toLocaleString()}</td>
                       <td className="py-3 text-center">{getStatusBadge(r.status)}</td>
                     </tr>
                   ))}
@@ -237,7 +401,7 @@ export default function AdminViews({
           </div>
 
           {/* Activity Ledger Flow */}
-          <div className="lg:col-span-5 bg-white rounded-2xl border border-neutral-200 p-6 shadow-sm space-y-4">
+          <div className="lg:col-span-5 apple-card p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
               <div>
                 <h3 className="font-bold text-neutral-800 text-sm">Real-time Team Activities</h3>
@@ -247,7 +411,7 @@ export default function AdminViews({
             </div>
 
             <div className="space-y-4 max-h-[300px] overflow-y-auto pr-1">
-              {activities.map((act, index) => (
+              {dynamicActivities.map((act, index) => (
                 <div key={index} className="flex gap-3 text-xs border-b border-neutral-50 pb-3 last:border-0 last:pb-0">
                   <div className="w-2 h-2 rounded-full bg-blue-500 mt-1.5 shrink-0" />
                   <div className="flex-1 min-w-0">
@@ -270,6 +434,37 @@ export default function AdminViews({
   // TAB 2: SALES PORTAL (Screenshot 2)
   // ==========================================
   const renderSales = () => {
+    // Dynamic Graph Logic
+    const last7Days = Array.from({ length: 7 }).map((_, i) => {
+      const d = new Date(dashboardDate);
+      d.setDate(d.getDate() - (6 - i));
+      return d.toISOString().split('T')[0];
+    });
+
+    const salesByDay = last7Days.map(date => {
+      return salesReports
+        .filter(r => r.date === date)
+        .reduce((sum, r) => sum + r.totalSales, 0);
+    });
+
+    const maxGraphSales = Math.max(...salesByDay, 1000);
+    
+    // SVG uses 100x30 coordinate system
+    const points = salesByDay.map((sales, i) => {
+      const x = (i / 6) * 100;
+      const y = 28 - ((sales / maxGraphSales) * 24); // range from 4 to 28
+      return { x, y, sales, date: last7Days[i] };
+    });
+
+    // Create SVG paths
+    const pathD = `M 0,30 ` + points.map(p => `L ${p.x},${p.y}`).join(' ') + ` L 100,30 Z`;
+    const lineD = `M ${points[0].x},${points[0].y} ` + points.slice(1).map(p => `L ${p.x},${p.y}`).join(' ');
+
+    const formatShortDate = (dateStr: string) => {
+      const d = new Date(dateStr);
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    };
+
     // Compute stats
     const totalSales = salesReports.reduce((s, r) => s + r.totalSales, 0);
     const totalCollected = collectionReports.reduce((s, r) => s + r.collectionAmount, 0);
@@ -288,27 +483,27 @@ export default function AdminViews({
         
         {/* KPI Scorecard block */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-white p-5 rounded-xl border border-neutral-200 flex items-center justify-between">
+          <div className="apple-card p-5 flex items-center justify-between">
             <div>
               <p className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider">Gross Sales total</p>
               <h3 className="text-2xl font-extrabold text-neutral-900 tracking-tight font-mono-sm mt-1">
-                ${totalSales.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                ₹{totalSales.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
               </h3>
             </div>
             <TrendingUp className="text-blue-500 shrink-0 bg-blue-50 p-2 rounded-lg" size={40} />
           </div>
 
-          <div className="bg-white p-5 rounded-xl border border-neutral-200 flex items-center justify-between">
+          <div className="apple-card p-5 flex items-center justify-between">
             <div>
               <p className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider">Payments Collected</p>
               <h3 className="text-2xl font-extrabold text-neutral-900 tracking-tight font-mono-sm mt-1">
-                ${totalCollected.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                ₹{totalCollected.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
               </h3>
             </div>
             <DollarSign className="text-emerald-500 shrink-0 bg-emerald-50 p-2 rounded-lg" size={40} />
           </div>
 
-          <div className="bg-white p-5 rounded-xl border border-neutral-200 flex items-center justify-between">
+          <div className="apple-card p-5 flex items-center justify-between">
             <div>
               <p className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider">Log Damaged SKUs</p>
               <h3 className="text-2xl font-extrabold text-neutral-900 tracking-tight font-mono-sm mt-1">
@@ -322,45 +517,53 @@ export default function AdminViews({
         {/* Performance Line trend charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           
-          <div className="bg-white p-6 rounded-2xl border border-neutral-200 space-y-4">
+          <div className="apple-card p-6 space-y-4">
             <div>
               <h4 className="text-sm font-bold text-neutral-800">Total Sales Trend Graph</h4>
               <p className="text-[11px] text-neutral-400">Weekly cumulative distributions monitor</p>
             </div>
             
-            {/* Custom SVG line chart matching Google's vector styling */}
-            <div className="h-48 w-full border border-neutral-100 rounded-xl bg-neutral-50/50 p-2 flex flex-col justify-between relative overflow-hidden">
+            {/* Dynamic SVG line chart */}
+            <div className="h-48 w-full border border-neutral-100 rounded-xl bg-neutral-50/50 p-2 flex flex-col justify-between relative overflow-hidden group">
               <svg className="w-full h-32 overflow-visible" viewBox="0 0 100 30" preserveAspectRatio="none">
                 <defs>
                   <linearGradient id="sales-gradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#2563EB" stopOpacity="0.25"/>
+                    <stop offset="0%" stopColor="#2563EB" stopOpacity="0.35"/>
                     <stop offset="100%" stopColor="#2563EB" stopOpacity="0.00"/>
                   </linearGradient>
                 </defs>
                 {/* Gridlines */}
-                <line x1="0" y1="5" x2="100" y2="5" stroke="#E5E5E5" strokeWidth="0.1" />
-                <line x1="0" y1="15" x2="100" y2="15" stroke="#E5E5E5" strokeWidth="0.1" />
-                <line x1="0" y1="25" x2="100" y2="25" stroke="#E5E5E5" strokeWidth="0.1" />
+                <line x1="0" y1="4" x2="100" y2="4" stroke="#E5E5E5" strokeWidth="0.1" />
+                <line x1="0" y1="16" x2="100" y2="16" stroke="#E5E5E5" strokeWidth="0.1" />
+                <line x1="0" y1="28" x2="100" y2="28" stroke="#E5E5E5" strokeWidth="0.1" />
                 
                 {/* SVG Area */}
-                <path d="M 0,28 L 5,22 Q 15,12 25,18 T 45,8 T 65,15 T 85,6 T 100,10 L 100,30 L 0,30 Z" fill="url(#sales-gradient)" />
+                <path d={pathD} fill="url(#sales-gradient)" className="transition-all duration-500 ease-in-out" />
                 {/* SVG Line */}
-                <path d="M 0,28 Q 10,20 20,15 T 40,10 T 60,18 T 80,4 T 100,10" fill="none" stroke="#2563eb" strokeWidth="0.8" strokeLinecap="round" />
+                <path d={lineD} fill="none" stroke="#2563eb" strokeWidth="0.8" strokeLinecap="round" strokeLinejoin="round" className="transition-all duration-500 ease-in-out" />
                 
-                {/* Interactivity indicators */}
-                <circle cx="40" cy="10" r="1.5" fill="#2563eb" className="animate-pulse" />
-                <circle cx="80" cy="4" r="1.5" fill="#10B981" />
+                {/* Data Points */}
+                {points.map((p, i) => (
+                  <circle 
+                    key={i} 
+                    cx={p.x} 
+                    cy={p.y} 
+                    r="1.2" 
+                    fill={i === 6 ? '#10B981' : '#2563eb'} 
+                    className="transition-all duration-500 ease-in-out hover:r-[2]"
+                  >
+                    <title>{formatShortDate(p.date)}: ₹{p.sales.toLocaleString()}</title>
+                  </circle>
+                ))}
               </svg>
 
               {/* Chart labels */}
-              <div className="flex justify-between text-[10px] text-neutral-400 font-mono-sm px-2 pt-1 border-t border-neutral-100">
-                <span>Oct 21</span>
-                <span>Oct 22</span>
-                <span>Oct 23</span>
-                <span>Oct 24</span>
-                <span>Oct 25</span>
-                <span>Oct 26</span>
-                <span>Oct 27 (Today)</span>
+              <div className="flex justify-between text-[9px] sm:text-[10px] text-neutral-400 font-mono-sm px-1 sm:px-2 pt-1 border-t border-neutral-100">
+                {points.map((p, i) => (
+                  <span key={i} className={i === 6 ? 'font-bold text-[#10B981]' : ''}>
+                    {i === 6 ? 'Today' : formatShortDate(p.date)}
+                  </span>
+                ))}
               </div>
             </div>
           </div>
@@ -373,24 +576,24 @@ export default function AdminViews({
             
             {/* Custom SVG bar charts for 7 salesmen */}
             <div className="space-y-2 max-h-[192px] overflow-y-auto pr-1">
-              {[
-                { name: 'John Doe', amount: totalSales * 0.28, count: 6 },
-                { name: 'Jane Smith', amount: totalSales * 0.18, count: 4 },
-                { name: 'Michael Brown', amount: totalSales * 0.22, count: 5 },
-                { name: 'David Chen', amount: totalSales * 0.15, count: 3 },
-                { name: 'Sarah Jenkins', amount: totalSales * 0.10, count: 2 },
-                { name: 'Alex Wong', amount: totalSales * 0.05, count: 1 },
-                { name: 'Emily Davis', amount: totalSales * 0.02, count: 1 }
-              ].map((man, i) => {
-                const maxVal = totalSales * 0.3;
-                const ratio = Math.min(100, (man.amount / maxVal) * 100);
+              {usersList.filter(u => u.role === 'Salesman').map((man) => {
+                const reports = salesReports.filter(r => r.salesmanId === man.id);
+                const amount = reports.reduce((sum, r) => sum + r.totalSales, 0);
+                const count = reports.length;
+                
+                // Find maximum sales among salesmen to scale ratios
+                const maxVal = Math.max(5000, ...usersList.filter(u => u.role === 'Salesman').map(u => 
+                  salesReports.filter(r => r.salesmanId === u.id).reduce((sum, r) => sum + r.totalSales, 0)
+                ));
+                const ratio = Math.min(100, Math.max(5, (amount / (maxVal || 1)) * 100));
+
                 return (
-                  <div key={i} className="space-y-1">
+                  <div key={man.id} className="space-y-1">
                     <div className="flex items-center justify-between text-xs text-neutral-700">
                       <span className="font-medium text-neutral-800">{man.name}</span>
                       <div className="flex gap-2 font-mono-sm">
-                        <span className="text-neutral-400">({man.count} orders)</span>
-                        <span className="font-bold text-neutral-900">${Math.round(man.amount).toLocaleString()}</span>
+                        <span className="text-neutral-400">({count} reports)</span>
+                        <span className="font-bold text-neutral-900">₹{amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
                       </div>
                     </div>
                     <div className="w-full bg-neutral-100 h-2 rounded-full overflow-hidden">
@@ -446,7 +649,7 @@ export default function AdminViews({
                     <td className="py-3 font-semibold text-neutral-900">{report.date}</td>
                     <td className="py-3 font-bold text-neutral-950">{report.salesmanName}</td>
                     <td className="py-3 text-neutral-500">{report.beatName}</td>
-                    <td className="py-3 text-right font-mono-sm font-semibold text-neutral-900">${report.totalSales.toFixed(2)}</td>
+                    <td className="py-3 text-right font-mono-sm font-semibold text-neutral-900">₹{report.totalSales.toFixed(2)}</td>
                     <td className="py-3 text-center">{getStatusBadge(report.status)}</td>
                     <td className="py-3 text-neutral-400 italic max-w-xs truncate">{report.remarks || 'No queries flagged'}</td>
                   </tr>
@@ -465,27 +668,99 @@ export default function AdminViews({
   // TAB 3: PACKING PORTAL (Screenshot 3)
   // ==========================================
   const renderPacking = () => {
-    // Math
-    const totalPacked = packingLogs.reduce((s, p) => s + p.productsPacked, 0);
-    const targetVal = 10000;
-    const completionPercent = Math.min(100, Math.round((totalPacked / targetVal) * 100));
+    // === DAILY MATH ===
+    const totalPacked = todayPackingLogs.reduce((s, p) => s + p.productsPacked, 0);
+    const completionPercent = dailyTarget > 0 ? Math.min(100, Math.round((totalPacked / dailyTarget) * 100)) : 0;
 
-    const filteredLogs = packingLogs.filter(log => {
-      return log.memberName.toLowerCase().includes(packingSearch.toLowerCase());
+    // Daily Leaderboard sorting
+    const dailyPackerStats = [...usersList.filter(u => u.role === 'Packing' && u.name.toLowerCase().includes(packingSearch.toLowerCase()))].map(packer => {
+      const log = todayPackingLogs.find(l => l.memberId === packer.id);
+      return {
+        ...packer,
+        log,
+        productsPacked: log ? log.productsPacked : 0,
+        efficiency: log ? log.efficiency : 0,
+        status: log ? log.status : 'Offline'
+      };
+    }).sort((a, b) => b.productsPacked - a.productsPacked);
+
+    // === MONTHLY MATH ===
+    const monthlyLogs = packingLogs.filter(log => {
+      if (!log.date) return false;
+      return log.date.startsWith(selectedMonth);
     });
+
+    const memberMonthlyMap = new Map<string, { logs: any[]; name: string; station: string }>();
+    monthlyLogs.forEach(log => {
+      const existing = memberMonthlyMap.get(log.memberId);
+      if (existing) {
+        existing.logs.push(log);
+      } else {
+        const packer = usersList.find(u => u.id === log.memberId);
+        const stationStr = packer?.detail || `Station ${log.station}`;
+        memberMonthlyMap.set(log.memberId, { logs: [log], name: log.memberName, station: stationStr });
+      }
+    });
+
+    // Month sorted by total Packed (Leaderboard requirement)
+    const monthlyPackerStats = Array.from(memberMonthlyMap.entries()).map(([memberId, data]) => {
+      const totalPacked = data.logs.reduce((s, l) => s + l.productsPacked, 0);
+      const avgEfficiency = Math.round(data.logs.reduce((s, l) => s + l.efficiency, 0) / (data.logs.length || 1));
+      const daysWorked = new Set(data.logs.map(l => l.date)).size;
+      return {
+        memberId,
+        name: data.name,
+        station: data.station,
+        totalPacked,
+        avgEfficiency,
+        daysWorked,
+      };
+    }).sort((a, b) => b.totalPacked - a.totalPacked);
+
+    const monthlyTeamOutput = monthlyPackerStats.reduce((s, p) => s + p.totalPacked, 0);
+    const bestPerformer = monthlyPackerStats.length > 0 ? monthlyPackerStats[0] : null;
+    const avgTeamEfficiency = monthlyPackerStats.length > 0
+      ? Math.round(monthlyPackerStats.reduce((s, p) => s + p.avgEfficiency, 0) / monthlyPackerStats.length)
+      : 0;
+    const totalWorkDays = monthlyPackerStats.reduce((s, p) => s + p.daysWorked, 0);
+    const selectedMonthLabel = monthOptions.find(o => o.value === selectedMonth)?.label || selectedMonth;
 
     return (
       <div id="packing-view" className="space-y-6">
         
-        {/* Packing line productivity bar */}
+        {/* Packing line productivity bar & Target Settings */}
         <div className="bg-white p-6 rounded-2xl border border-neutral-200 shadow-sm space-y-4">
-          <div className="flex justify-between items-end">
+          <div className="flex justify-between items-start">
             <div>
               <span className="text-xs text-neutral-400 font-bold uppercase tracking-wider">Corporate Fulfillment Target</span>
               <h2 className="text-xl font-bold text-neutral-900 mt-1">Daily Company Target</h2>
             </div>
+            {isAdmin && (
+              <div className="flex gap-4">
+                <div className="bg-neutral-50 px-3 py-1.5 rounded-lg border border-neutral-200">
+                  <span className="text-[10px] text-neutral-500 font-bold uppercase block mb-0.5">Daily Goal</span>
+                  <input 
+                    type="number" 
+                    value={dailyTarget} 
+                    onChange={e => saveDailyTarget(Number(e.target.value))}
+                    className="w-20 bg-transparent text-sm font-bold font-mono-sm outline-none text-indigo-700" 
+                  />
+                </div>
+                <div className="bg-neutral-50 px-3 py-1.5 rounded-lg border border-neutral-200">
+                  <span className="text-[10px] text-neutral-500 font-bold uppercase block mb-0.5">Monthly per Packer Goal</span>
+                  <input 
+                    type="number" 
+                    value={monthlyTarget} 
+                    onChange={e => saveMonthlyTarget(Number(e.target.value))}
+                    className="w-20 bg-transparent text-sm font-bold font-mono-sm outline-none text-indigo-700" 
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end">
             <p className="text-sm font-bold text-indigo-600 font-mono-sm">
-              {totalPacked.toLocaleString()} / {targetVal.toLocaleString()} units ({completionPercent}% completed)
+              {totalPacked.toLocaleString()} / {dailyTarget.toLocaleString()} units ({completionPercent}% completed)
             </p>
           </div>
 
@@ -497,10 +772,10 @@ export default function AdminViews({
           </div>
         </div>
 
-        {/* Team Metrics Cards Grid */}
+        {/* Daily Leaderboard & Stations */}
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-neutral-800 text-sm">Station Level Efficiency Metrics (7 benches)</h3>
+            <h3 className="font-bold text-neutral-800 text-sm">🏆 Daily Leaderboard & Stations</h3>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" size={12} />
               <input 
@@ -514,32 +789,43 @@ export default function AdminViews({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {filteredLogs.map((log) => {
-              const isOnBreak = log.status === 'On Break';
-              const isCheckedOut = log.status === 'Checked Out';
+            {dailyPackerStats.map((packer, idx) => {
+              const isOnBreak = packer.status === 'On Break';
+              const isCheckedOut = packer.status === 'Checked Out';
+              const isPacking = packer.status === 'Packing';
+              const stationStr = packer.detail || `Station ${packer.id.replace(/\D/g, '')}`;
+
               return (
-                <div key={log.id} className="bg-white p-4 rounded-xl border border-neutral-200 shadow-sm flex flex-col justify-between space-y-3">
+                <div key={packer.id} className={`bg-white p-4 rounded-xl border ${idx < 3 ? 'border-amber-300 shadow-md bg-gradient-to-b from-[#FFFDF0] to-white' : 'border-neutral-200 shadow-sm'} flex flex-col justify-between space-y-3 relative overflow-hidden`}>
+                  {idx === 0 && <div className="absolute top-0 right-0 bg-amber-400 text-amber-900 text-[10px] font-black px-2 py-0.5 rounded-bl-lg">🥇 1st Place</div>}
+                  {idx === 1 && <div className="absolute top-0 right-0 bg-slate-300 text-slate-800 text-[10px] font-black px-2 py-0.5 rounded-bl-lg">🥈 2nd Place</div>}
+                  {idx === 2 && <div className="absolute top-0 right-0 bg-orange-300 text-orange-900 text-[10px] font-black px-2 py-0.5 rounded-bl-lg">🥉 3rd Place</div>}
+
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase font-bold text-neutral-400">Station {log.station}</span>
+                    <span className="text-[10px] uppercase font-bold text-neutral-400">{stationStr}</span>
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                      isOnBreak ? 'bg-amber-100 text-amber-800' : 
-                      isCheckedOut ? 'bg-neutral-100 text-neutral-500' : 'bg-emerald-100 text-emerald-800'
+                      isOnBreak ? 'bg-amber-100 text-amber-800 border border-amber-200' : 
+                      isCheckedOut ? 'bg-neutral-100 text-neutral-500 border border-neutral-200' : 
+                      isPacking ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 
+                      'bg-red-50 text-red-700 border border-red-150'
                     }`}>
-                      {log.status}
+                      {packer.status}
                     </span>
                   </div>
 
                   <div>
-                    <h4 className="font-bold text-neutral-900 text-sm">{log.memberName}</h4>
+                    <h4 className="font-bold text-neutral-900 text-sm">{packer.name}</h4>
                     <p className="text-xl font-extrabold text-neutral-900 tracking-tight font-mono-sm mt-1">
-                      {log.productsPacked.toLocaleString()}{' '}
-                      <span className="text-xs text-neutral-400 font-medium font-sans">units</span>
+                      {packer.productsPacked.toLocaleString()}{' '}
+                      <span className="text-xs text-neutral-400 font-medium font-sans">products</span>
                     </p>
                   </div>
 
                   <div className="border-t border-neutral-100 pt-2 flex items-center justify-between text-[11px] text-neutral-500 font-mono-sm">
                     <span>Performance Coefficient:</span>
-                    <span className="font-bold text-indigo-600">{log.efficiency}%</span>
+                    <span className={`font-bold ${packer.efficiency >= 90 ? 'text-emerald-600' : packer.efficiency >= 80 ? 'text-indigo-600' : 'text-neutral-500'}`}>
+                      {packer.efficiency}%
+                    </span>
                   </div>
                 </div>
               );
@@ -547,68 +833,163 @@ export default function AdminViews({
           </div>
         </div>
 
-        {/* Lunch Break Log & Checkout Times */}
-        <div className="bg-white rounded-2xl border border-neutral-200 p-6 shadow-sm space-y-4">
-          <div className="border-b border-neutral-100 pb-3">
-            <h3 className="font-bold text-neutral-800 text-sm">Lunch Break Logs & Shift checkout ledger</h3>
-            <p className="text-[11px] text-neutral-500">Continuous monitoring of staff shift times & checkout compliance</p>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-neutral-700 border-collapse">
-              <thead>
-                <tr className="border-b border-neutral-200 text-[10px] text-neutral-400 uppercase tracking-wider font-bold">
-                  <th className="py-2.5">Packer Name</th>
-                  <th className="py-2.5">Station Slot</th>
-                  <th className="py-2.5">Lunch Start</th>
-                  <th className="py-2.5">Lunch End</th>
-                  <th className="py-2.5">Duration Log</th>
-                  <th className="py-2.5">Checkout Completed</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100">
-                {packingLogs.map((log) => (
-                  <tr key={log.id} className="hover:bg-neutral-50/50 transition-colors">
-                    <td className="py-3 font-semibold text-neutral-950">{log.memberName}</td>
-                    <td className="py-3 text-neutral-500">Bench Station {log.station}</td>
-                    <td className="py-3 font-mono-sm text-amber-700 font-semibold">{log.lunchStart}</td>
-                    <td className="py-3 font-mono-sm text-emerald-800 font-semibold">{log.lunchEnd}</td>
-                    <td className="py-3 text-neutral-600 font-medium">
-                      {log.lunchEnd === 'In Progress' ? 'In Break' : '30 min'}
-                    </td>
-                    <td className="py-3">
-                      {log.checkoutTime === 'Pending' ? (
-                        <span className="text-amber-600 font-semibold text-[10px] bg-amber-50 px-2 py-1 rounded-full border border-amber-200">Pending Checkout</span>
-                      ) : (
-                        <span className="text-slate-800 font-mono-sm font-semibold">{log.checkoutTime}</span>
-                      )}
-                    </td>
-                  </tr>
+        {/* ============================================ */}
+        {/* MONTHLY PACKING PROGRESS & LEADERBOARD       */}
+        {/* ============================================ */}
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="font-bold text-neutral-800 text-base">🏆 Monthly Packer Leaderboard</h3>
+              <p className="text-[11px] text-neutral-500">Ranked by total volume processed</p>
+            </div>
+            <div className="relative">
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-[#0071E3]" size={14} />
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="pl-8 pr-8 py-2 bg-white border border-neutral-200 rounded-lg text-xs font-bold text-neutral-700 appearance-none outline-none focus:border-[#0071E3] shadow-sm cursor-pointer"
+              >
+                {monthOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
-              </tbody>
-            </table>
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" size={14} />
+            </div>
           </div>
-        </div>
 
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-neutral-150">
+              <span className="text-[10px] uppercase font-bold text-neutral-400">Total Output</span>
+              <p className="text-xl font-black font-mono-sm text-neutral-900 mt-1">{monthlyTeamOutput.toLocaleString()}</p>
+            </div>
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-neutral-150">
+              <span className="text-[10px] uppercase font-bold text-neutral-400">Monthly MVP</span>
+              <p className="text-xl font-black text-[#0071E3] mt-1 flex items-center gap-2">
+                {bestPerformer ? bestPerformer.name : 'N/A'} {bestPerformer && '👑'}
+              </p>
+            </div>
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-neutral-150">
+              <span className="text-[10px] uppercase font-bold text-neutral-400">Average Efficiency</span>
+              <p className="text-xl font-black font-mono-sm text-neutral-900 mt-1">{avgTeamEfficiency}%</p>
+            </div>
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-neutral-150">
+              <span className="text-[10px] uppercase font-bold text-neutral-400">Total Shifts Logged</span>
+              <p className="text-xl font-black font-mono-sm text-neutral-900 mt-1">{totalWorkDays}</p>
+            </div>
+          </div>
+
+          {monthlyPackerStats.length === 0 ? (
+            <div className="bg-neutral-50 border border-neutral-200 border-dashed rounded-xl p-8 flex flex-col items-center justify-center text-center">
+              <Package size={32} className="text-neutral-300 mb-3" />
+              <p className="font-semibold text-neutral-600">No packing data for {selectedMonthLabel}</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {monthlyPackerStats.map((packer, idx) => {
+                const progressPercent = monthlyTarget > 0 ? Math.min(100, Math.round((packer.totalPacked / monthlyTarget) * 100)) : 0;
+                
+                // Color coding based on progress to target
+                let barColor = 'bg-neutral-400';
+                let effBg = 'bg-neutral-100';
+                let effColor = 'text-neutral-600';
+                let dotColor = 'bg-neutral-300';
+
+                if (progressPercent >= 100) {
+                  barColor = 'bg-emerald-500';
+                  effBg = 'bg-emerald-50';
+                  effColor = 'text-emerald-700';
+                  dotColor = 'bg-emerald-500';
+                } else if (progressPercent >= 75) {
+                  barColor = 'bg-[#0071E3]';
+                  effBg = 'bg-blue-50';
+                  effColor = 'text-[#0071E3]';
+                  dotColor = 'bg-[#0071E3]';
+                } else if (progressPercent >= 50) {
+                  barColor = 'bg-amber-500';
+                  effBg = 'bg-amber-50';
+                  effColor = 'text-amber-700';
+                  dotColor = 'bg-amber-500';
+                } else {
+                  barColor = 'bg-rose-500';
+                  effBg = 'bg-rose-50';
+                  effColor = 'text-rose-700';
+                  dotColor = 'bg-rose-500';
+                }
+
+                return (
+                  <div key={packer.memberId} className={`bg-white p-4 rounded-xl border shadow-sm flex flex-col gap-3 ${idx < 3 ? 'border-[#0071E3]/30' : 'border-neutral-200'}`}>
+                    <div className="flex justify-between items-start">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${idx === 0 ? 'bg-amber-400 text-white shadow-md' : idx === 1 ? 'bg-slate-300 text-white shadow-md' : idx === 2 ? 'bg-orange-300 text-white shadow-md' : 'bg-neutral-100 text-neutral-500'}`}>
+                          #{idx + 1}
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-neutral-900 text-sm flex items-center gap-2">
+                            {packer.name} 
+                            {idx === 0 && <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">Top Packer</span>}
+                          </h4>
+                          <span className="text-[10px] text-neutral-400 uppercase font-bold">{packer.station}</span>
+                        </div>
+                      </div>
+                      
+                      <div className="text-right">
+                        <span className="text-[10px] text-neutral-500 uppercase font-bold block mb-0.5">Average Eff.</span>
+                        <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full border ${effBg} ${effColor}`}>
+                          {packer.avgEfficiency}%
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between items-end mt-2">
+                      <div>
+                        <span className="text-[10px] text-neutral-500 uppercase font-bold block mb-0.5">Monthly Total</span>
+                        <p className={`text-lg font-extrabold font-mono-sm ${effColor}`}>{packer.totalPacked.toLocaleString()}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] font-bold text-neutral-500 font-mono-sm">
+                          {progressPercent}% of target
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="w-full bg-neutral-100 h-2 rounded-full overflow-hidden mt-1">
+                      <div 
+                        className={`${barColor} h-2 rounded-full transition-all duration-700`}
+                        style={{ width: `${progressPercent}%` }} 
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     );
   };
 
-
-  // ==========================================
   // TAB 4: DELIVERY & RETURNS PORTAL (Screenshot 4)
   // ==========================================
   const renderDelivery = () => {
     // Calculations
-    const totalMileage = mileageReports.reduce((s, r) => s + (r.endOdo - r.startOdo), 0);
+    const totalMileage = todayMileageReports.reduce((s, r) => s + (r.endOdo - r.startOdo), 0);
     const totalCash = marketCollections.filter(c => c.type === 'Cash').reduce((s, c) => s + c.amount, 0);
     const totalIMPS = marketCollections.filter(c => c.type === 'IMPS').reduce((s, c) => s + c.amount, 0);
     const totalCheque = marketCollections.filter(c => c.type === 'Cheque').reduce((s, c) => s + c.amount, 0);
 
-    const filteredReturns = returnReports.filter(r => {
+    
+    const unifiedReturns = [
+      ...todayReturnReports.map(r => ({ ...r, _sourceType: 'Driver', _name: r.driverName })),
+      ...todayDamageReports.map(r => ({ ...r, _sourceType: 'Salesman', _name: r.salesmanName }))
+    ];
+
+    const filteredReturns = unifiedReturns.filter(r => {
       const q = returnsSearch.toLowerCase();
-      return r.shopName.toLowerCase().includes(q) || r.productName.toLowerCase().includes(q);
+      // Use existing getReturnDisplayName for both, since both have items[] or productName
+      const displayName = getReturnDisplayName(r as any);
+      return r.shopName.toLowerCase().includes(q) || displayName.toLowerCase().includes(q);
     });
+
 
     return (
       <div id="delivery-view" className="space-y-6">
@@ -685,22 +1066,22 @@ export default function AdminViews({
             <div className="grid grid-cols-3 gap-2 pt-2 text-center text-xs border-t border-neutral-100">
               <div className="p-1 rounded bg-amber-50 border border-amber-200">
                 <p className="text-[9px] text-neutral-400 font-bold uppercase">Total Cash</p>
-                <span className="font-bold text-neutral-800 font-mono-sm">${totalCash.toLocaleString(undefined, {maximumFractionDigits:0})}</span>
+                <span className="font-bold text-neutral-800 font-mono-sm">₹{totalCash.toLocaleString(undefined, {maximumFractionDigits:0})}</span>
               </div>
               <div className="p-1 rounded bg-indigo-50 border border-indigo-200">
                 <p className="text-[9px] text-neutral-400 font-bold uppercase">total IMPS</p>
-                <span className="font-bold text-indigo-700 font-mono-sm">${totalIMPS.toLocaleString(undefined, {maximumFractionDigits:0})}</span>
+                <span className="font-bold text-indigo-700 font-mono-sm">₹{totalIMPS.toLocaleString(undefined, {maximumFractionDigits:0})}</span>
               </div>
               <div className="p-1 rounded bg-emerald-50 border border-emerald-200">
                 <p className="text-[9px] text-neutral-400 font-bold uppercase">TOTAL Cheque</p>
-                <span className="font-bold text-emerald-700 font-mono-sm">${totalCheque.toLocaleString(undefined, {maximumFractionDigits:0})}</span>
+                <span className="font-bold text-emerald-700 font-mono-sm">₹{totalCheque.toLocaleString(undefined, {maximumFractionDigits:0})}</span>
               </div>
             </div>
           </div>
 
         </div>
 
-        {/* Returns Monitor catalog list */}
+        {/* Returns Monitor catalog list — updated for multi-item ReturnReport */}
         <div id="returns-monitor" className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 pb-3">
             <div>
@@ -725,38 +1106,99 @@ export default function AdminViews({
               <thead>
                 <tr className="border-b border-neutral-200 text-[10px] text-neutral-400 uppercase tracking-wider font-bold">
                   <th className="py-2.5">Shop ID / Name</th>
-                  <th className="py-2.5">Returned Product Name</th>
-                  <th className="py-2.5 text-center">MRP</th>
-                  <th className="py-2.5 text-center">Quantity</th>
-                  <th className="py-2.5 text-right">Value Amount</th>
-                  <th className="py-2.5 text-center">Reason Logged</th>
+                  <th className="py-2.5">Returned Items</th>
+                  <th className="py-2.5 text-center">Total Qty</th>
+                  <th className="py-2.5 text-right">Total Value</th>
+                  <th className="py-2.5 text-center">Reason / Details</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
-                {filteredReturns.map((ret) => (
-                  <tr key={ret.id} className="hover:bg-neutral-50/50 transition-colors">
-                    <td className="py-3">
-                      <p className="font-bold text-neutral-900">{ret.shopName}</p>
-                      <span className="text-[10px] text-neutral-400 font-mono-sm">{ret.shopNo}</span>
-                    </td>
-                    <td className="py-3 items-center gap-1.5">
-                      <div className="flex items-center gap-1.5 font-semibold text-neutral-800">
-                        <Coffee size={12} className="text-amber-600" />
-                        <span>{ret.productName}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 text-center font-mono-sm text-neutral-600">${ret.mrp.toFixed(2)}</td>
-                    <td className="py-3 text-center font-bold text-neutral-800 bg-neutral-50/50">{ret.quantity} units</td>
-                    <td className="py-3 text-right font-mono-sm font-bold text-neutral-900">
-                      ${(ret.mrp * ret.quantity).toFixed(2)}
-                    </td>
-                    <td className="py-3 text-center">
-                      <span className="inline-block px-2.5 py-1 text-[10px] bg-rose-50 text-rose-800 font-bold rounded-lg border border-rose-100">
-                        {ret.remarks || 'Damaged packaging'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {filteredReturns.map((ret) => {
+                  const items = getReturnItems(ret);
+                  const totalValue = getReturnTotalValue(ret);
+                  const totalQty = getReturnTotalQuantity(ret);
+                  const isMulti = items.length > 1;
+                  const isExpanded = expandedReturnIds.has(ret.id);
+
+                  return (
+                    <React.Fragment key={ret.id}>
+                      <tr className="hover:bg-neutral-50/50 transition-colors">
+                        <td className="py-3">
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold text-neutral-900">{ret.shopName}</p>
+                            {(ret as any)._sourceType === 'Salesman' ? (
+                              <span className="text-[9px] bg-red-100 text-red-800 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">Sales Damage</span>
+                            ) : (
+                              <span className="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">Driver Return</span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-neutral-400 font-mono-sm">{ret.shopNo}</span>
+                        </td>
+                        <td className="py-3">
+                          <div className="flex items-center gap-1.5">
+                            <Coffee size={12} className="text-amber-600 shrink-0" />
+                            {isMulti ? (
+                              <button
+                                onClick={() => toggleReturnExpand(ret.id)}
+                                className="flex items-center gap-1 text-[#0071E3] font-semibold hover:underline"
+                              >
+                                <span>{items.length} items</span>
+                                {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                              </button>
+                            ) : (
+                              <span className="font-semibold text-neutral-800">{items[0]?.productName || '—'}</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 text-center font-bold text-neutral-800 bg-neutral-50/50">{totalQty} units</td>
+                        <td className="py-3 text-right font-mono-sm font-bold text-neutral-900">
+                          ₹{totalValue.toFixed(2)}
+                        </td>
+                        <td className="py-3 text-center">
+                          {isMulti ? (
+                            <span className="inline-block px-2.5 py-1 text-[10px] bg-indigo-50 text-indigo-800 font-bold rounded-lg border border-indigo-100">
+                              Multiple reasons
+                            </span>
+                          ) : (
+                            <span className="inline-block px-2.5 py-1 text-[10px] bg-rose-50 text-rose-800 font-bold rounded-lg border border-rose-100">
+                              {items[0]?.reason || ret.remarks || 'Damaged packaging'}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                      {/* Expanded item details row */}
+                      {isMulti && isExpanded && (
+                        <tr>
+                          <td colSpan={5} className="p-0">
+                            <div className="bg-[#F5F5F7] border-t border-neutral-200 px-6 py-3">
+                              <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-2">Item Breakdown</p>
+                              <div className="space-y-2">
+                                {items.map((item, idx) => (
+                                  <div key={idx} className="flex items-center justify-between text-xs bg-white rounded-lg border border-neutral-200 px-3 py-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] text-neutral-400 font-mono-sm w-5 text-center">{idx + 1}.</span>
+                                      <span className="font-semibold text-neutral-800">{item.productName}</span>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                      <span className="text-neutral-500">x{item.quantity}</span>
+                                      <span className="font-mono-sm text-neutral-600">MRP: ₹{item.mrp.toFixed(2)}</span>
+                                      <span className="font-mono-sm font-bold text-neutral-900">₹{(item.mrp * item.quantity).toFixed(2)}</span>
+                                      {item.reason && (
+                                        <span className="text-[10px] bg-rose-50 text-rose-700 px-2 py-0.5 rounded-full border border-rose-100 font-medium">
+                                          {item.reason}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -770,7 +1212,7 @@ export default function AdminViews({
               <p className="text-[11px] text-neutral-500">Traceable bank draft collection records (Cash, Checks, and automated IMPS)</p>
             </div>
             <span className="text-xs bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-full text-indigo-700 font-bold font-mono-sm">
-              Total Market Capital: ${(totalCash + totalIMPS + totalCheque).toLocaleString(undefined, {minimumFractionDigits:2})}
+              Total Market Capital: ₹{(totalCash + totalIMPS + totalCheque).toLocaleString(undefined, {minimumFractionDigits:2})}
             </span>
           </div>
 
@@ -805,7 +1247,7 @@ export default function AdminViews({
                       {col.referenceNo || '- No draft needed -'}
                     </td>
                     <td className="py-3 text-right font-mono-sm font-black text-neutral-900">
-                      ${col.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                      ₹{col.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}
                     </td>
                     <td className="py-3 text-center">{getStatusBadge(col.status)}</td>
                   </tr>
@@ -1094,7 +1536,215 @@ export default function AdminViews({
               </div>
             </div>
 
-          </div>
+
+
+            {/* 2. COLLECTION REPORTS QUEUE */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
+                <DollarSign size={14} />
+                <span>Salesman Collection Reports Validation Queue</span>
+              </h4>
+              <div className="border border-neutral-200 rounded-xl overflow-hidden shadow-sm">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-[#FAF9F6]">
+                    <tr className="border-b border-neutral-200 text-[10px] text-neutral-500 font-bold uppercase">
+                      <th className="p-3">Salesman User ID</th>
+                      <th className="p-3">Beat Location</th>
+                      <th className="p-3 text-right">Amount</th>
+                      <th className="p-3 text-right"></th>
+                      {isAdmin && <th className="p-3 text-center">Images</th>}
+                      <th className="p-3 text-center">Status Color</th>
+                      <th className="p-3">Auditor Action Panel</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100">
+                    {collectionReports.map((report) => (
+                      <tr key={report.id} className={`hover:bg-neutral-50/45 transition-all ${getStatusClass(report.status)}`}>
+                        <td className="p-3">
+                          <p className="font-bold text-neutral-950">{report.salesmanName}</p>
+                          <span className="text-[10px] text-neutral-400 font-mono-sm">ID: {report.salesmanId}</span>
+                        </td>
+                        <td className="p-3 text-neutral-600 font-medium">{report.beatName}</td>
+                        <td className="p-3 text-right font-mono-sm font-black text-neutral-900">₹{report.collectionAmount?.toFixed(2)}</td>
+                        <td className="p-3 text-right font-mono-sm font-semibold text-neutral-700"></td>
+                        {isAdmin && (
+                          <td className="p-3 text-center">
+                            {report.images && report.images.length > 0 ? (
+                              <button onClick={() => setViewingImage(report.images?.[0] || null)} className="text-blue-600 underline font-semibold text-xs">View Image</button>
+                            ) : <span className="text-xs text-neutral-400">-</span>}
+                          </td>
+                        )}
+                        <td className="p-3 text-center">{getStatusBadge(report.status)}</td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <button 
+                              onClick={() => onVerifyCollectionReport(report.id, 'Verified')}
+                              className="p-1 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold flex items-center gap-1"
+                            >
+                              <Check size={10} /> Verify
+                            </button>
+                            <button 
+                              onClick={() => setActiveAuditItem({ id: report.id, type: 'collection_rep', remarks: report.remarks || '' })}
+                              className="p-1 px-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10px] font-bold flex items-center gap-1"
+                            >
+                              <X size={10} /> Query
+                            </button>
+                          </div>
+                          {report.remarks && (
+                            <p className="text-[10px] text-rose-700 font-medium italic mt-1 flex items-center gap-1">
+                              <MessageSquare size={10} /> Remarks: {report.remarks}
+                            </p>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 3. RETURN REPORTS QUEUE */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold text-purple-700 uppercase tracking-wider flex items-center gap-1.5">
+                <RefreshCw size={14} />
+                <span>Return Reports Validation Queue</span>
+              </h4>
+              <div className="border border-neutral-200 rounded-xl overflow-hidden shadow-sm">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-[#FAF9F6]">
+                    <tr className="border-b border-neutral-200 text-[10px] text-neutral-500 font-bold uppercase">
+                      <th className="p-3">Driver User ID</th>
+                      <th className="p-3">Shop details</th>
+                      <th className="p-3 text-right">Items & Total</th>
+                      {isAdmin && <th className="p-3 text-center">Images</th>}
+                      <th className="p-3 text-center">Status Color</th>
+                      <th className="p-3">Auditor Action Panel</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100">
+                    {returnReports.map((report) => {
+                      const totalMRP = getReturnTotalValue(report);
+                      const itemsCount = getReturnItems(report).length;
+                      return (
+                      <tr key={report.id} className={`hover:bg-neutral-50/45 transition-all ${getStatusClass(report.status)}`}>
+                        <td className="p-3">
+                          <p className="font-bold text-neutral-950">{report.driverName}</p>
+                          <span className="text-[10px] text-neutral-400 font-mono-sm">ID: {report.driverId}</span>
+                        </td>
+                        <td className="p-3">
+                          <p className="text-neutral-800 font-bold leading-tight">{report.shopName}</p>
+                          <span className="text-[10px] text-neutral-400 font-mono-sm uppercase">{report.shopNo}</span>
+                        </td>
+                        <td className="p-3 text-right">
+                          <p className="font-semibold text-neutral-800">{itemsCount} Products</p>
+                          <span className="text-[10px] font-mono-sm font-black text-rose-700">₹{totalMRP.toFixed(2)}</span>
+                        </td>
+                        {isAdmin && (
+                          <td className="p-3 text-center">
+                            {report.images && report.images.length > 0 ? (
+                              <button onClick={() => setViewingImage(report.images?.[0] || null)} className="text-blue-600 underline font-semibold text-xs">View Image</button>
+                            ) : <span className="text-xs text-neutral-400">-</span>}
+                          </td>
+                        )}
+                        <td className="p-3 text-center">{getStatusBadge(report.status)}</td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <button 
+                              onClick={() => onVerifyReturnReport(report.id, 'Verified')}
+                              className="p-1 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold flex items-center gap-1"
+                            >
+                              <Check size={10} /> Verify
+                            </button>
+                            <button 
+                              onClick={() => setActiveAuditItem({ id: report.id, type: 'return_rep', remarks: report.remarks || '' })}
+                              className="p-1 px-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10px] font-bold flex items-center gap-1"
+                            >
+                              <X size={10} /> Query
+                            </button>
+                          </div>
+                          {report.remarks && (
+                            <p className="text-[10px] text-rose-700 font-medium italic mt-1 flex items-center gap-1">
+                              <MessageSquare size={10} /> Remarks: {report.remarks}
+                            </p>
+                          )}
+                        </td>
+                      </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 4. MILEAGE REPORTS QUEUE */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                <MapPin size={14} />
+                <span>Mileage Reports Validation Queue</span>
+              </h4>
+              <div className="border border-neutral-200 rounded-xl overflow-hidden shadow-sm">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-[#FAF9F6]">
+                    <tr className="border-b border-neutral-200 text-[10px] text-neutral-500 font-bold uppercase">
+                      <th className="p-3">Driver User ID</th>
+                      <th className="p-3">Route Zone</th>
+                      <th className="p-3">Odometer Readings</th>
+                      <th className="p-3 text-right">Total Distance</th>
+                      {isAdmin && <th className="p-3 text-center">Images</th>}
+                      <th className="p-3 text-center">Status Color</th>
+                      <th className="p-3">Auditor Action Panel</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100">
+                    {mileageReports.map((report) => (
+                      <tr key={report.id} className={`hover:bg-neutral-50/45 transition-all ${getStatusClass(report.status)}`}>
+                        <td className="p-3">
+                          <p className="font-bold text-neutral-950">{report.driverName}</p>
+                          <span className="text-[10px] text-neutral-400 font-mono-sm">ID: {report.driverId}</span>
+                        </td>
+                        <td className="p-3 text-neutral-600 font-medium">{report.routeId}</td>
+                        <td className="p-3 font-mono-sm text-neutral-500">
+                          {report.startOdo} → {report.endOdo}
+                        </td>
+                        <td className="p-3 text-right font-mono-sm font-black text-neutral-900">
+                          {(report.endOdo - report.startOdo).toFixed(1)} km
+                        </td>
+                        {isAdmin && (
+                          <td className="p-3 text-center">
+                            {report.images && report.images.length > 0 ? (
+                              <button onClick={() => setViewingImage(report.images?.[0] || null)} className="text-blue-600 underline font-semibold text-xs">View Image</button>
+                            ) : <span className="text-xs text-neutral-400">-</span>}
+                          </td>
+                        )}
+                        <td className="p-3 text-center">{getStatusBadge(report.status)}</td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <button 
+                              onClick={() => onVerifyMileageReport(report.id, 'Verified')}
+                              className="p-1 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold flex items-center gap-1"
+                            >
+                              <Check size={10} /> Verify
+                            </button>
+                            <button 
+                              onClick={() => setActiveAuditItem({ id: report.id, type: 'mileage_rep', remarks: report.remarks || '' })}
+                              className="p-1 px-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10px] font-bold flex items-center gap-1"
+                            >
+                              <X size={10} /> Query
+                            </button>
+                          </div>
+                          {report.remarks && (
+                            <p className="text-[10px] text-rose-700 font-medium italic mt-1 flex items-center gap-1">
+                              <MessageSquare size={10} /> Remarks: {report.remarks}
+                            </p>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+\n          </div>
         </div>
 
         {viewingImage && (
@@ -1152,6 +1802,10 @@ export default function AdminViews({
                   onClick={() => {
                     const { id, type, remarks } = activeAuditItem;
                     if (type === 'sales_rep') onVerifySalesReport(id, 'Disputed', remarks);
+                    else if (type === 'damage_rep') onVerifyDamageReport(id, 'Disputed', remarks);
+                    else if (type === 'collection_rep') onVerifyCollectionReport(id, 'Disputed', remarks);
+                    else if (type === 'return_rep') onVerifyReturnReport(id, 'Disputed', remarks);
+                    else if (type === 'mileage_rep') onVerifyMileageReport(id, 'Disputed', remarks);
                     else if (type === 'market_coll') onVerifyMarketCollection(id, 'Disputed', remarks);
                     setActiveAuditItem(null);
                   }}

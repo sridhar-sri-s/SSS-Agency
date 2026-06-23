@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  BarChart3, Users, ClipboardCheck, Truck, ShieldAlert,
-  ArrowRight, Sparkles, Building, Database, Menu, X, Sun, Moon, LogIn, LogOut
+  BarChart3, Users, ClipboardCheck, Truck,
+  Building, Database, Menu, X, LogIn, LogOut
 } from 'lucide-react';
 
 import { 
@@ -9,13 +9,11 @@ import {
   PackingLog, ReturnReport, MileageReport, MarketCollection 
 } from './types';
 
-import { DEFAULT_USERS } from './mockData';
-
-import RoleSwitcher from './components/RoleSwitcher';
 import SubmitReportForms from './components/SubmitReportForms';
 import AdminViews from './components/AdminViews';
 import LoginView from './components/LoginView';
-import { useApi } from './useApi';
+import { useAppwrite } from './useAppwrite';
+import { COLLECTIONS } from './lib/appwrite';
 
 export default function App() {
   
@@ -24,24 +22,28 @@ export default function App() {
     return localStorage.getItem('distro_is_logged_in') === 'true';
   });
 
-  const { data: usersList, add: apiAddUser, update: apiUpdateUser, remove: apiRemoveUser } = useApi<TeamMember>('/api/team', DEFAULT_USERS);
+  const { data: usersList, add: apiAddUser, update: apiUpdateUser, remove: apiRemoveUser } = useAppwrite<TeamMember>(COLLECTIONS.TEAM_MEMBERS);
 
   // Wrapper for setUsersList inside components that expect a dispatcher or simple array methods
   const setUsersList = (action: React.SetStateAction<TeamMember[]>) => {
-    // If it's a new full array, infer changes or simply just fallback to API updates manually.
-    // Our TeamManagement handles add/edit/delete by mutating array, but we can hook into it.
-    // Actually, we should refactor AdminViews to use add/update/remove directly. 
-    // For now, we'll implement a sync-all helper if needed, but the simple approach is to let TeamManagement handle the sync manually. Let's provide a proxy for `setUsersList` that we'll fix later or we can just pass the handlers!
+    // No-op: AdminViews handles add/edit/delete via apiAddUser/apiUpdateUser/apiRemoveUser directly.
   };
 
   // --- STATE FOR CURRENT USER ACTIVE SIMULATION ---
   const [currentRole, setCurrentRole] = useState<TeamMember>(() => {
     const saved = localStorage.getItem('distro_current_role');
-    if (saved) return JSON.parse(saved);
+    if (saved && saved !== 'null' && saved !== 'undefined') {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.id) return parsed;
+      } catch (e) {
+        console.error('Failed to parse currentRole from localStorage', e);
+      }
+    }
     return {
       id: 'admin',
       name: 'Global Administrator',
-      role: 'Accounts',
+      role: 'System Admin',
       detail: 'Primary Admin Owner',
       avatar: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200'
     };
@@ -51,13 +53,13 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // --- REMOTE DATA STATES ---
-  const { data: salesReports, add: addSalesReport, update: updateSalesReport } = useApi<SalesReport>('/api/sales');
-  const { data: damageReports, add: addDamageReport, update: updateDamageReport } = useApi<DamageReport>('/api/damage');
-  const { data: collectionReports, add: addCollectionReport, update: updateCollectionReport } = useApi<CollectionReport>('/api/collection');
-  const { data: packingLogs, add: addPackingLogBase, update: updatePackingLogBase } = useApi<PackingLog>('/api/packing');
-  const { data: returnReports, add: addReturnReport, update: updateReturnReport } = useApi<ReturnReport>('/api/returns');
-  const { data: mileageReports, add: addMileageReport, update: updateMileageReport } = useApi<MileageReport>('/api/mileage');
-  const { data: marketCollections, add: addMarketCollection, update: updateMarketCollection } = useApi<MarketCollection>('/api/market');
+  const { data: salesReports, add: addSalesReport, update: updateSalesReport } = useAppwrite<SalesReport>(COLLECTIONS.SALES_REPORTS);
+  const { data: damageReports, add: addDamageReport, update: updateDamageReport } = useAppwrite<DamageReport>(COLLECTIONS.DAMAGE_REPORTS);
+  const { data: collectionReports, add: addCollectionReport, update: updateCollectionReport } = useAppwrite<CollectionReport>(COLLECTIONS.COLLECTION_REPORTS);
+  const { data: packingLogs, add: addPackingLogBase, update: updatePackingLogBase } = useAppwrite<PackingLog>(COLLECTIONS.PACKING_LOGS);
+  const { data: returnReports, add: addReturnReport, update: updateReturnReport } = useAppwrite<ReturnReport>(COLLECTIONS.RETURN_REPORTS);
+  const { data: mileageReports, add: addMileageReport, update: updateMileageReport } = useAppwrite<MileageReport>(COLLECTIONS.MILEAGE_REPORTS);
+  const { data: marketCollections, add: addMarketCollection, update: updateMarketCollection } = useAppwrite<MarketCollection>(COLLECTIONS.MARKET_COLLECTIONS);
 
   useEffect(() => {
     localStorage.setItem('distro_current_role', JSON.stringify(currentRole));
@@ -82,14 +84,8 @@ export default function App() {
     }
   };
 
-  const handleResetData = async () => {
-    if (confirm('Are you sure you want to reset all records?')) {
-      alert("Database reset is not fully implemented in API yet, use admin panels to delete!");
-    }
-  };
-
-  const isManagementPersona = currentRole.id === 'admin' || currentRole.role === 'Accounts';
-  const isAdmin = currentRole.id === 'admin';
+  const isManagementPersona = currentRole.id === 'admin' || currentRole.role === 'Accounts' || currentRole.role === 'System Admin';
+  const isAdmin = currentRole.id === 'admin' || currentRole.role === 'System Admin';
 
   const menuItems = [
     { id: 'overview', name: 'Overview Home', icon: Building, desc: 'Operational KPI dashboard' },
@@ -118,17 +114,17 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col bg-[#F5F5F7] text-[#1D1D1F]">
       
-      <header className="bg-white/90 backdrop-blur-md border-b border-[#D2D2D7] sticky top-0 z-40 px-6 py-3.5 shadow-sm">
+      <header className="glass-panel sticky top-0 z-40 px-6 py-3.5 shadow-sm">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-[#0071E3] rounded-lg flex items-center justify-center text-white font-bold shadow-sm">
-              D
+            <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center text-white font-bold text-xs tracking-tighter shadow-sm">
+              SSS
             </div>
             <div>
               <h2 className="text-base font-semibold text-[#1D1D1F] tracking-tight flex items-center gap-2">
-                <span>DistriFlow Pro</span>
+                <span>SSS Enterprises</span>
                 <span className="text-[10px] font-bold text-[#0071E3] bg-[#0071E3]/10 px-2 py-0.5 rounded-full inline-block uppercase">
-                  v2.4.0
+                  v3.0.0
                 </span>
               </h2>
               <p className="text-[10px] text-[#86868B] font-medium font-sans">Distributed Logistical Dispatch & Audit Verification Hub</p>
@@ -234,14 +230,6 @@ export default function App() {
                 <span>Sign Out Account</span>
               </button>
             </div>
-
-            <div className="bg-amber-50/70 border border-amber-200 p-3.5 rounded-xl flex items-start gap-2 text-xs text-amber-900 leading-normal shadow-sm-light">
-              <Sparkles size={15} className="text-amber-500 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold text-amber-950 uppercase tracking-wider text-[10px]">Active Synchronization</p>
-                <p className="mt-1 text-amber-800 text-[10px] leading-relaxed">Change to salesman/packer via the persona switcher in the bottom-right corner to submit reports directly to the API.</p>
-              </div>
-            </div>
           </aside>
         ) : (
           <aside className="w-full md:w-64 bg-white border-r border-[#D2D2D7] p-5 shrink-0 space-y-4">
@@ -255,29 +243,13 @@ export default function App() {
               </p>
             </div>
 
-            <div className="space-y-3 border-t border-[#D2D2D7] pt-4 px-1">
-              <span className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider block">Simulator Control</span>
-              
+            <div className="border-t border-[#D2D2D7] pt-4 px-1">
               <button 
                 onClick={handleLogout}
                 className="w-full flex items-center justify-center gap-2 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-xs font-semibold transition-colors border border-red-200 cursor-pointer"
               >
                 <LogOut size={13} />
                 <span>Sign Out Account</span>
-              </button>
-
-              <button 
-                onClick={() => setCurrentRole({
-                  id: 'admin',
-                  name: 'Global Administrator',
-                  role: 'Accounts',
-                  detail: 'Primary Admin Owner',
-                  avatar: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200'
-                })}
-                className="w-full flex items-center justify-between text-left p-2.5 px-3 bg-white hover:bg-[#F5F5F7] text-[#0071E3] rounded-lg text-xs font-semibold transition-colors border border-[#D2D2D7] cursor-pointer shadow-sm-light"
-              >
-                <span>Return to Administrator</span>
-                <ArrowRight size={14} className="text-[#0071E3]" />
               </button>
             </div>
           </aside>
@@ -323,17 +295,6 @@ export default function App() {
         </main>
 
       </div>
-
-      <RoleSwitcher 
-        currentRole={currentRole}
-        usersList={usersList}
-        onChangeRole={(member) => {
-          setCurrentRole(member);
-          if (member.id === 'admin' || member.role === 'Accounts') {
-            setCurrentTab('overview');
-          }
-        }}
-      />
     </div>
   );
 }
